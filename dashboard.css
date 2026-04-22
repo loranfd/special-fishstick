@@ -414,17 +414,20 @@ body {
   background: #fff;
   border-radius: 8px;
   cursor: pointer;
-  padding: 0.3rem 0.5rem;
+  padding: 0.28rem 0.45rem;
   font-size: 0.75rem;
   color: #334155;
+  white-space: nowrap;
 }
 .campaign-inline-btn.secondary {
   background: #f8fafc;
 }
 .editing-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
   justify-content: center;
+  min-width: 92px;
 }
 
 .embudo-value.unavailable {

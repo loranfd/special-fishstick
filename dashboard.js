@@ -873,12 +873,28 @@ function getDailyLeads(fechaInicio, fechaFin, contactosEnRango) {
   return days;
 }
 
+function normalizarFechaISO(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (match) return match[1];
+  const d = new Date(raw);
+  if (isNaN(d)) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function normalizarCampaniaRow(row) {
   return {
     id: String(row.id || ''),
     nombre: String(row.nombre || row.nombreCampania || ''),
-    fechaInicio: String(row.fechaInicio || ''),
-    fechaFin: String(row.fechaFin || ''),
+    promocionId: String(row.promocionId || ''),
+    promocionNombre: String(row.promocionNombre || row.promocion || ''),
+    fechaInicio: normalizarFechaISO(row.fechaInicio),
+    fechaFin: normalizarFechaISO(row.fechaFin),
     clics: Number(row.clics || 0),
     impresiones: Number(row.impresiones || 0),
     coste: Number(row.coste || 0),
@@ -929,6 +945,78 @@ function calcularMetricasCampania(base) {
     costeDia: diasCampania > 0 ? coste / diasCampania : 0,
     leadsDia: diasCampania > 0 ? leads / diasCampania : 0
   };
+}
+
+function actualizarDiagnosticoEmbudo({ ctrCalc, conv, cpc, cpl, clicsPorFormulario }) {
+  const kpiMessage = {
+    ctr: ctrCalc === null ? '' : (ctrCalc < 1 ? '🔴 El anuncio no está captando atención diaria' : (ctrCalc < 2 ? '🟠 Atención mejorable, optimizar creatividades' : (ctrCalc <= 4 ? '🟢 CTR correcto y estable' : '🔥 Anuncio muy atractivo diariamente'))),
+    conv: conv === null ? '' : (conv < 1 ? '🔴 La landing no convierte de forma consistente' : (conv < 2 ? '🟠 Conversión baja diaria, revisar formulario o mensaje' : (conv <= 5 ? '🟢 Conversión correcta y estable' : '🔥 Landing muy optimizada en el tiempo'))),
+    cpc: cpc === null ? '' : (cpc < 0.10 ? '🔥 Tráfico extremadamente barato sostenido' : (cpc < 0.30 ? '🟢 Clic eficiente de forma estable' : (cpc <= 0.80 ? '🟠 CPC medio, optimización posible' : '🔴 Clic caro sostenido en el tiempo'))),
+    cpl: cpl === null ? '' : (cpl < 15 ? '🔥 Captación muy eficiente y estable' : (cpl < 35 ? '🟢 Coste controlado diario' : (cpl < 60 ? '🟠 Lead caro de forma sostenida' : '🔴 Campaña no rentable en el tiempo'))),
+    calidad: clicsPorFormulario === null ? '' : (clicsPorFormulario < 20 ? '🔥 Tráfico muy cualificado de forma constante' : (clicsPorFormulario <= 40 ? '🟢 Buen tráfico diario' : (clicsPorFormulario <= 100 ? '🟠 Calidad media estable' : '🔴 Tráfico poco cualificado sostenido')))
+  };
+
+  let combinado = '';
+  if (ctrCalc !== null && conv !== null) {
+    if (ctrCalc < 2 && conv < 2) combinado = '🔴 Problema estructural diario en embudo';
+    else if (ctrCalc >= 2 && conv < 2) combinado = '🔴 Anuncio funciona, landing falla';
+    else if (ctrCalc < 2 && conv >= 2) combinado = '🔴 Buen producto pero anuncio débil';
+    else if (ctrCalc > 4 && conv > 5) combinado = '🔥 Campaña altamente optimizada diaria';
+    else combinado = '🟢 Embudo equilibrado en el tiempo';
+  }
+
+  document.getElementById('diag-ctr').textContent = kpiMessage.ctr;
+  document.getElementById('diag-conv').textContent = kpiMessage.conv;
+  document.getElementById('diag-cpc').textContent = kpiMessage.cpc;
+  document.getElementById('diag-cpl').textContent = kpiMessage.cpl;
+  document.getElementById('diag-calidad').textContent = kpiMessage.calidad;
+  document.getElementById('diag-combinado').textContent = combinado;
+}
+
+function cargarCampaniaEnResumen(campaignId) {
+  const campaña = obtenerCampaniaPorId(campaignId);
+  if (!campaña) return;
+
+  const selectCat = document.getElementById('embudo-categoria');
+  if (selectCat && campaña.promocionId) {
+    const existe = Array.from(selectCat.options).some(o => o.value === campaña.promocionId);
+    if (existe) selectCat.value = campaña.promocionId;
+  }
+
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+
+  setVal('camp-nombre', campaña.nombre || '');
+  setVal('input-fecha-inicio', campaña.fechaInicio || '');
+  setVal('input-fecha-fin', campaña.fechaFin || '');
+  setVal('input-clics', Number.isFinite(campaña.clics) ? campaña.clics : '');
+  setVal('input-impresiones', Number.isFinite(campaña.impresiones) ? campaña.impresiones : '');
+  setVal('input-coste', Number.isFinite(campaña.coste) ? campaña.coste : '');
+  setVal('input-formularios', Number.isFinite(campaña.leads) ? campaña.leads : 0);
+
+  setMetricValue('res-cpc', campaña.cpc);
+  setMetricValue('res-conv', campaña.conversion, '%');
+  setMetricValue('res-cpl', campaña.cpl, '€');
+  setMetricValue('res-ctr', campaña.ctr, '%');
+  setMetricValue('res-coste-lead-click', campaña.cpl, '€');
+  setMetricValue('res-dia-clics', campaña.clicsDia);
+  setMetricValue('res-dia-impresiones', campaña.impresionesDia);
+  setMetricValue('res-dia-coste', campaña.costeDia, '€');
+  setMetricValue('res-dia-leads', campaña.leadsDia);
+
+  const clicsPorFormulario = campaña.leads > 0 ? campaña.clics / campaña.leads : null;
+  actualizarDiagnosticoEmbudo({
+    ctrCalc: Number.isFinite(campaña.ctr) ? campaña.ctr : null,
+    conv: Number.isFinite(campaña.conversion) ? campaña.conversion : null,
+    cpc: Number.isFinite(campaña.cpc) ? campaña.cpc : null,
+    cpl: Number.isFinite(campaña.cpl) ? campaña.cpl : null,
+    clicsPorFormulario: Number.isFinite(clicsPorFormulario) ? clicsPorFormulario : null
+  });
+
+  document.querySelector('details.bg-campaign')?.setAttribute('open', 'open');
+  document.querySelector('.bg-campaign')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function obtenerCampaniaPorId(id) {
@@ -1023,6 +1111,7 @@ function cerrarMenusCampanias(exceptId) {
 }
 
 function obtenerPayloadCampaniaDesdeFila(row, id) {
+  const campaña = obtenerCampaniaPorId(id);
   const getInput = (field) => row.querySelector(`[data-edit="${field}"]`);
   const base = {
     id: String(id || ''),
@@ -1033,6 +1122,8 @@ function obtenerPayloadCampaniaDesdeFila(row, id) {
     impresiones: Number(getInput('impresiones')?.value || ''),
     coste: Number(getInput('coste')?.value || ''),
     leads: Number(getInput('leads')?.value || ''),
+    promocionId: String(campaña?.promocionId || ''),
+    promocionNombre: String(campaña?.promocionNombre || ''),
     timestamp: new Date().toISOString()
   };
   return { ...base, ...calcularMetricasCampania(base) };
@@ -1065,6 +1156,12 @@ function configurarEventosComparacionCampanias() {
   });
 
   tabla.addEventListener('click', async (event) => {
+    const rowCampania = event.target.closest('tr[data-campaign-id]');
+    if (rowCampania && !event.target.closest('.campaign-actions-cell') && !event.target.closest('input') && !event.target.closest('button')) {
+      cargarCampaniaEnResumen(rowCampania.dataset.campaignId);
+      return;
+    }
+
     const target = event.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
@@ -1163,6 +1260,8 @@ async function guardarCampaña() {
   const impresiones = Number(document.getElementById('input-impresiones')?.value || '');
   const coste = Number(document.getElementById('input-coste')?.value || '');
   const leads = Number(document.getElementById('input-formularios')?.value || '');
+  const promocionId = String(document.getElementById('embudo-categoria')?.value || 'all').trim();
+  const promocionNombre = String(document.getElementById('embudo-categoria')?.selectedOptions?.[0]?.textContent || 'Todo').trim();
   const msg = document.getElementById('guardar-campania-msg');
 
   const metricToNumber = (id) => {
@@ -1198,6 +1297,8 @@ async function guardarCampaña() {
     campaign: {
       id: `camp_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       nombre,
+      promocionId,
+      promocionNombre,
       fechaInicio,
       fechaFin,
       clics,
@@ -1289,31 +1390,8 @@ function calcularEmbudo() {
   setMetricValue('res-dia-coste', costeDia, '€');
   setMetricValue('res-dia-leads', leadsDia);
 
-  const kpiMessage = {
-    ctr: ctrCalc === null ? '' : (ctrCalc < 1 ? '🔴 El anuncio no está captando atención diaria' : (ctrCalc < 2 ? '🟠 Atención mejorable, optimizar creatividades' : (ctrCalc <= 4 ? '🟢 CTR correcto y estable' : '🔥 Anuncio muy atractivo diariamente'))),
-    conv: conv === null ? '' : (conv < 1 ? '🔴 La landing no convierte de forma consistente' : (conv < 2 ? '🟠 Conversión baja diaria, revisar formulario o mensaje' : (conv <= 5 ? '🟢 Conversión correcta y estable' : '🔥 Landing muy optimizada en el tiempo'))),
-    cpc: cpc === null ? '' : (cpc < 0.10 ? '🔥 Tráfico extremadamente barato sostenido' : (cpc < 0.30 ? '🟢 Clic eficiente de forma estable' : (cpc <= 0.80 ? '🟠 CPC medio, optimización posible' : '🔴 Clic caro sostenido en el tiempo'))),
-    cpl: cpl === null ? '' : (cpl < 15 ? '🔥 Captación muy eficiente y estable' : (cpl < 35 ? '🟢 Coste controlado diario' : (cpl < 60 ? '🟠 Lead caro de forma sostenida' : '🔴 Campaña no rentable en el tiempo'))),
-    calidad: clicsPorFormulario === null ? '' : (clicsPorFormulario < 20 ? '🔥 Tráfico muy cualificado de forma constante' : (clicsPorFormulario <= 40 ? '🟢 Buen tráfico diario' : (clicsPorFormulario <= 100 ? '🟠 Calidad media estable' : '🔴 Tráfico poco cualificado sostenido')))
-  };
-
-  let combinado = '';
-  if (ctrCalc !== null && conv !== null) {
-    if (ctrCalc < 2 && conv < 2) combinado = '🔴 Problema estructural diario en embudo';
-    else if (ctrCalc >= 2 && conv < 2) combinado = '🔴 Anuncio funciona, landing falla';
-    else if (ctrCalc < 2 && conv >= 2) combinado = '🔴 Buen producto pero anuncio débil';
-    else if (ctrCalc > 4 && conv > 5) combinado = '🔥 Campaña altamente optimizada diaria';
-    else combinado = '🟢 Embudo equilibrado en el tiempo';
-  }
-
   renderCampaniasEnComparacion();
-
-  document.getElementById('diag-ctr').textContent = kpiMessage.ctr;
-  document.getElementById('diag-conv').textContent = kpiMessage.conv;
-  document.getElementById('diag-cpc').textContent = kpiMessage.cpc;
-  document.getElementById('diag-cpl').textContent = kpiMessage.cpl;
-  document.getElementById('diag-calidad').textContent = kpiMessage.calidad;
-  document.getElementById('diag-combinado').textContent = combinado;
+  actualizarDiagnosticoEmbudo({ ctrCalc, conv, cpc, cpl, clicsPorFormulario });
 }
 
 

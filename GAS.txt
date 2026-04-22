@@ -1072,7 +1072,7 @@ function getCampaignSheet_() {
 
 function ensureCampaignHeaders_(sheet) {
   const expected = [
-    'id', 'nombre', 'fechaInicio', 'fechaFin', 'clics', 'impresiones', 'coste', 'leads',
+    'id', 'nombre', 'promocionId', 'promocionNombre', 'fechaInicio', 'fechaFin', 'clics', 'impresiones', 'coste', 'leads',
     'ctr', 'cpc', 'cpl', 'conversion', 'diasCampania',
     'clicsDia', 'impresionesDia', 'costeDia', 'leadsDia', 'timestamp'
   ];
