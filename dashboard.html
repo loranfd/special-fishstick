@@ -113,8 +113,8 @@
 
 <!-- Métricas desplegables -->
 <div class="metrics-accordion">
-  <details class="metric-block bg-campaign" open>
-    <summary>👉 🟢 RESUMEN DE CAMPAÑA</summary>
+  <details id="detalle-resumen" class="metric-block bg-campaign" open>
+    <summary>👉 🟢 RESUMEN DE CAMPAÑA <span id="resumen-campania-nombre" style="font-weight:600; margin-left:8px;"></span></summary>
       <div class="metric-body">
       <div class="embudo-inputs">
         <div class="input-group">
@@ -153,11 +153,12 @@
         <div class="embudo-metric"><p class="embudo-label">📈 Conversión (%)</p><p class="embudo-value" id="res-conv"></p></div>
         <div class="embudo-metric"><p class="embudo-label">💸 CPC</p><p class="embudo-value" id="res-cpc"></p></div>
       </div>
+      <button id="btn-reset-resumen" class="metric-btn secondary" type="button">Normalizar a 0</button>
       <p class="metric-help">Vista principal, limpia y rápida para analizar la campaña.</p>
     </div>
   </details>
 
-  <details class="metric-block bg-compare">
+  <details id="detalle-guardar" class="metric-block bg-compare">
     <summary>💾 GUARDAR CAMPAÑA</summary>
     <div class="metric-body">
       <div class="embudo-inputs">
@@ -170,7 +171,7 @@
   </details>
 
   <div class="metric-row-two">
-    <details class="metric-block bg-attraction" open>
+    <details id="detalle-anuncio" class="metric-block bg-attraction" open>
       <summary>👉 🟡 ANUNCIO (ATRACCIÓN)</summary>
       <div class="metric-body">
         <div class="embudo-resultados">
@@ -180,7 +181,7 @@
       </div>
     </details>
 
-    <details class="metric-block bg-quality" open>
+    <details id="detalle-trafico" class="metric-block bg-quality" open>
       <summary>👉 🔵 TRÁFICO (CALIDAD)</summary>
       <div class="metric-body">
         <div class="embudo-resultados">
@@ -191,7 +192,7 @@
     </details>
   </div>
 
-  <details class="metric-block bg-advanced">
+  <details id="detalle-rendimiento" class="metric-block bg-advanced">
     <summary>📊 RENDIMIENTO DIARIO</summary>
     <div class="metric-body">
       <div class="embudo-resultados">
@@ -203,7 +204,7 @@
     </div>
   </details>
 
-  <details class="metric-block bg-compare">
+  <details id="detalle-comparacion" class="metric-block bg-compare">
     <summary>🧩 🔥 COMPARACIÓN</summary>
     <div class="metric-body">
       <table id="tabla-comparacion" class="tabla-comparacion">
@@ -215,7 +216,7 @@
     </div>
   </details>
 
-  <details class="metric-block bg-diagnostic">
+  <details id="detalle-diagnostico" class="metric-block bg-diagnostic">
     <summary>🧠 DIAGNÓSTICO</summary>
     <div class="metric-body">
       <div class="diagnostic-grid" id="diagnostic-grid">

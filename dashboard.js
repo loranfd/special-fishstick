@@ -781,6 +781,11 @@ function configurarEmbudo() {
     btnGuardarCampania.addEventListener('click', guardarCampaña);
   }
 
+  const btnResetResumen = document.getElementById('btn-reset-resumen');
+  if (btnResetResumen) {
+    btnResetResumen.addEventListener('click', resetearResumenCampania);
+  }
+
   const embudoInputs = [
     'embudo-categoria',
     'input-fecha-inicio',
@@ -1006,6 +1011,11 @@ function cargarCampaniaEnResumen(campaignId) {
   setMetricValue('res-dia-coste', campaña.costeDia, '€');
   setMetricValue('res-dia-leads', campaña.leadsDia);
 
+  const resumenNombre = document.getElementById('resumen-campania-nombre');
+  if (resumenNombre) {
+    resumenNombre.textContent = campaña.nombre ? `· ${campaña.nombre}` : '';
+  }
+
   const clicsPorFormulario = campaña.leads > 0 ? campaña.clics / campaña.leads : null;
   actualizarDiagnosticoEmbudo({
     ctrCalc: Number.isFinite(campaña.ctr) ? campaña.ctr : null,
@@ -1015,8 +1025,34 @@ function cargarCampaniaEnResumen(campaignId) {
     clicsPorFormulario: Number.isFinite(clicsPorFormulario) ? clicsPorFormulario : null
   });
 
-  document.querySelector('details.bg-campaign')?.setAttribute('open', 'open');
-  document.querySelector('.bg-campaign')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  abrirBloquesAnalisisCampania();
+  document.getElementById('detalle-resumen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function abrirBloquesAnalisisCampania() {
+  const abrirIds = ['detalle-resumen', 'detalle-anuncio', 'detalle-trafico', 'detalle-rendimiento', 'detalle-diagnostico'];
+  abrirIds.forEach((id) => document.getElementById(id)?.setAttribute('open', 'open'));
+  document.getElementById('detalle-guardar')?.removeAttribute('open');
+}
+
+function resetearResumenCampania() {
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+
+  setVal('camp-nombre', '');
+  setVal('input-fecha-inicio', '');
+  setVal('input-fecha-fin', '');
+  setVal('input-clics', 0);
+  setVal('input-impresiones', 0);
+  setVal('input-coste', 0);
+  setVal('input-formularios', 0);
+  const categoria = document.getElementById('embudo-categoria');
+  if (categoria) categoria.value = 'all';
+  const resumenNombre = document.getElementById('resumen-campania-nombre');
+  if (resumenNombre) resumenNombre.textContent = '';
+  calcularEmbudo();
 }
 
 function obtenerCampaniaPorId(id) {
