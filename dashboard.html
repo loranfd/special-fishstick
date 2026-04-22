@@ -1,0 +1,258 @@
+<!-- dashboard.html (actualizado con nuevos elementos para filtros y gráfico adicional) -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - Análisis de Contactos</title>
+  <link rel="stylesheet" href="dashboard.css">  <!-- Renómbralo a style.css si lo prefieres -->
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Loading -->
+    <div id="loading" class="loading-screen">
+      <div class="spinner"></div>
+      <p>Cargando datos...</p>
+    </div>
+
+    <!-- Dashboard Content -->
+    <div id="dashboard-content" style="display: none;">
+      <!-- Header -->
+      <header class="dashboard-header">
+        <div>
+          <h1>📊 Dashboard de Contactos</h1>
+          <p>Análisis completo de tus leads y conversiones</p>
+        </div>
+        <button onclick="window.close()" class="btn-back">← Volver</button>
+      </header>
+
+      <!-- Filtros globales/mensuales/rango (nuevo) -->
+      <div class="filter-section" style="background: white; padding: 1rem; border-radius: 12px; margin-bottom: 2rem; display: flex; gap: 1rem; align-items: center; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);">
+        <select id="filtro-tipo" class="form-select" style="width: 200px;">
+          <option value="global">Global</option>
+          <option value="mensual">Mensual</option>
+          <option value="rango">Rango de fechas</option>
+        </select>
+        <select id="filtro-mes" style="width: 200px; display: none;">
+          <!-- Se poblará dinámicamente -->
+        </select>
+        <input type="date" id="filtro-inicio" style="display: none;">
+        <input type="date" id="filtro-fin" style="display: none;">
+        <button id="aplicar-filtro" class="btn-back" style="background: #667eea; color: white;">Aplicar</button>
+      </div>
+
+      <!-- KPIs principales -->
+      <div class="kpi-grid">
+        <div class="kpi-card blue">
+          <div class="kpi-content">
+            <div>
+              <p class="kpi-label">Total Contactos</p>
+              <p class="kpi-value" id="kpi-total">0</p>
+            </div>
+            <div class="kpi-icon">👥</div>
+          </div>
+        </div>
+
+        <div class="kpi-card green">
+          <div class="kpi-content">
+            <div>
+              <p class="kpi-label">Vivienda Normal</p>
+              <p class="kpi-value" id="kpi-normal">0</p>
+            </div>
+            <div class="kpi-icon">🏠</div>
+          </div>
+        </div>
+
+        <div class="kpi-card purple">
+          <div class="kpi-content">
+            <div>
+              <p class="kpi-label">Villas Cortegada</p>
+              <p class="kpi-value" id="kpi-villas">0</p>
+            </div>
+            <div class="kpi-icon">🏖️</div>
+          </div>
+        </div>
+
+        <div class="kpi-card orange">
+          <div class="kpi-content">
+            <div>
+              <p class="kpi-label">Ubicaciones</p>
+              <p class="kpi-value" id="kpi-ubicaciones">0</p>
+            </div>
+            <div class="kpi-icon">📍</div>
+          </div>
+        </div>
+      </div>
+
+  <!-- Gráficos principales (Distribución y Procedencia en grid) -->
+<div class="charts-grid">
+  <!-- Distribución por tipo -->
+  <div class="chart-card">
+    <h3>📊 Distribución por Tipo de Vivienda</h3>
+    <div id="chart-tipos"></div>
+  </div>
+
+  <!-- Procedencia -->
+  <div class="chart-card">
+    <h3>📈 Procedencia de Contactos</h3>
+    <div id="chart-procedencia"></div>
+  </div>
+
+  <!-- Contactos por Tiempo (debajo, full width) -->
+<!-- Contactos por Tiempo (debajo, full width) -->
+<div class="chart-card" style="margin-top: 2rem; grid-column: 1 / 3;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h3 style="margin: 0;">📅 Contactos por Tiempo</h3>
+    <div id="periodo-info" style="font-size: 1.1rem; font-weight: 600; color: #667eea;">
+      <!-- Se llenará dinámicamente -->
+    </div>
+  </div>
+  <div id="chart-tiempo"></div>
+</div>
+</div>
+
+<!-- Métricas desplegables -->
+<div class="metrics-accordion">
+  <details class="metric-block bg-campaign" open>
+    <summary>👉 🟢 RESUMEN DE CAMPAÑA</summary>
+      <div class="metric-body">
+      <div class="embudo-inputs">
+        <div class="input-group">
+          <label>Promoción/Categoría</label>
+          <select id="embudo-categoria" class="form-select">
+            <option value="all">Todo</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Fecha inicio</label>
+          <input type="date" id="input-fecha-inicio">
+        </div>
+        <div class="input-group">
+          <label>Fecha fin</label>
+          <input type="date" id="input-fecha-fin">
+        </div>
+        <div class="input-group">
+          <label>Clics Totales</label>
+          <input type="number" id="input-clics" placeholder="Ej: 1000">
+        </div>
+        <div class="input-group">
+          <label>Impresiones</label>
+          <input type="number" id="input-impresiones" placeholder="Ej: 50000">
+        </div>
+        <div class="input-group">
+          <label>Coste Total (€)</label>
+          <input type="number" step="0.01" id="input-coste" placeholder="Ej: 500">
+        </div>
+        <div class="input-group">
+          <label>Formularios/Clientes (auto)</label>
+          <input type="number" id="input-formularios" readonly>
+        </div>
+      </div>
+      <div class="embudo-resultados">
+        <div class="embudo-metric"><p class="embudo-label">💰 Coste por contacto</p><p class="embudo-value" id="res-cpl"></p></div>
+        <div class="embudo-metric"><p class="embudo-label">📈 Conversión (%)</p><p class="embudo-value" id="res-conv"></p></div>
+        <div class="embudo-metric"><p class="embudo-label">💸 CPC</p><p class="embudo-value" id="res-cpc"></p></div>
+      </div>
+      <p class="metric-help">Vista principal, limpia y rápida para analizar la campaña.</p>
+    </div>
+  </details>
+
+  <details class="metric-block bg-compare">
+    <summary>💾 GUARDAR CAMPAÑA</summary>
+    <div class="metric-body">
+      <div class="embudo-inputs">
+        <div class="input-group"><label>Nombre campaña</label><input type="text" id="camp-nombre" placeholder="Ej: Meta Abril"></div>
+      </div>
+      <button id="btn-guardar-campania" class="metric-btn">Guardar en histórico</button>
+      <p class="metric-help">Usa exactamente los datos ya calculados en 🟢 RESUMEN DE CAMPAÑA (fechas, clics, impresiones, coste y formularios).</p>
+      <p class="metric-help" id="guardar-campania-msg"></p>
+    </div>
+  </details>
+
+  <div class="metric-row-two">
+    <details class="metric-block bg-attraction" open>
+      <summary>👉 🟡 ANUNCIO (ATRACCIÓN)</summary>
+      <div class="metric-body">
+        <div class="embudo-resultados">
+          <div class="embudo-metric"><p class="embudo-label">CTR (%)</p><p class="embudo-value" id="res-ctr"></p></div>
+        </div>
+        <p class="metric-help">👉 Mide si el anuncio llama la atención.</p>
+      </div>
+    </details>
+
+    <details class="metric-block bg-quality" open>
+      <summary>👉 🔵 TRÁFICO (CALIDAD)</summary>
+      <div class="metric-body">
+        <div class="embudo-resultados">
+          <div class="embudo-metric"><p class="embudo-label">Coste por lead desde clic</p><p class="embudo-value" id="res-coste-lead-click"></p></div>
+        </div>
+        <p class="metric-help">Coste medio estimado por lead generado desde tráfico de clics. Te ayuda a validar si el clic acaba convirtiendo a un coste razonable.</p>
+      </div>
+    </details>
+  </div>
+
+  <details class="metric-block bg-advanced">
+    <summary>📊 RENDIMIENTO DIARIO</summary>
+    <div class="metric-body">
+      <div class="embudo-resultados">
+        <div class="embudo-metric"><p class="embudo-label">Clics por día</p><p class="embudo-value" id="res-dia-clics"></p></div>
+        <div class="embudo-metric"><p class="embudo-label">Impresiones por día</p><p class="embudo-value" id="res-dia-impresiones"></p></div>
+        <div class="embudo-metric"><p class="embudo-label">Coste por día</p><p class="embudo-value" id="res-dia-coste"></p></div>
+        <div class="embudo-metric"><p class="embudo-label">Leads por día</p><p class="embudo-value" id="res-dia-leads"></p></div>
+      </div>
+    </div>
+  </details>
+
+  <details class="metric-block bg-compare">
+    <summary>🧩 🔥 COMPARACIÓN</summary>
+    <div class="metric-body">
+      <table id="tabla-comparacion" class="tabla-comparacion">
+        <thead><tr><th>Campaña</th><th>Inicio</th><th>Fin</th><th>Clics</th><th>Impresiones</th><th>Coste</th><th>Clientes</th><th>CPL</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="metric-help">Campañas guardadas y ordenadas por CPL (mejor → peor).</p>
+      <p class="metric-help" id="comparacion-resumen"></p>
+    </div>
+  </details>
+
+  <details class="metric-block bg-diagnostic">
+    <summary>🧠 DIAGNÓSTICO</summary>
+    <div class="metric-body">
+      <div class="diagnostic-grid" id="diagnostic-grid">
+        <div class="diag-item"><p class="embudo-label">CTR</p><p class="embudo-value" id="diag-ctr"></p></div>
+        <div class="diag-item"><p class="embudo-label">Conversión</p><p class="embudo-value" id="diag-conv"></p></div>
+        <div class="diag-item"><p class="embudo-label">CPC</p><p class="embudo-value" id="diag-cpc"></p></div>
+        <div class="diag-item"><p class="embudo-label">CPL</p><p class="embudo-value" id="diag-cpl"></p></div>
+        <div class="diag-item"><p class="embudo-label">Calidad</p><p class="embudo-value" id="diag-calidad"></p></div>
+        <div class="diag-item"><p class="embudo-label">Embudo combinado</p><p class="embudo-value" id="diag-combinado"></p></div>
+      </div>
+    </div>
+  </details>
+</div>
+
+      <!-- Mapa de ubicaciones (simulado con cards, como ya estaba; para interactivo real, usa iframe de Google Maps si necesitas, pero sin frameworks) -->
+      <div class="chart-card">
+        <h3>🗺️ Ubicaciones de Interés - Vivienda Normal</h3>
+        <div id="mapa-ubicaciones" class="mapa-grid"></div>
+        <!-- Opcional: Iframe simulado de Google Maps (reemplaza con tu embed si quieres marcadores dinámicos) -->
+        <!-- <iframe src="https://www.google.com/maps/embed?pb=..." width="100%" height="300" style="border:0; margin-top: 1rem;" allowfullscreen="" loading="lazy"></iframe> -->
+		<!-- Notas y Exportación -->
+      <div class="notas-export-section" style="background: white; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); margin-top: 2rem;">
+        <div style="display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap;">
+          <button id="btn-toggle-nota" class="btn-nota">📝 Añadir nota o comentario</button>
+          <button id="btn-exportar" class="btn-exportar">⬇️ Exportar a CSV / Excel</button>
+        </div>
+        <div id="nota-container" style="display: none; margin-top: 1.5rem;">
+          <textarea id="nota-texto" placeholder="Escribe tu nota o comentario aquí..." style="width: 100%; min-height: 120px; padding: 1rem; border: 2px solid #e2e8f0; border-radius: 12px; font-family: inherit; font-size: 1rem; resize: vertical;"></textarea>
+        </div>
+      </div>
+      </div>
+	  
+
+    </div>
+  </div>
+
+  <script src="categoria-system.js"></script>
+<script src="dashboard.js"></script>  <!-- Renómbralo a script.js si lo prefieres -->
+</body>
+</html>

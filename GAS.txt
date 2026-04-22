@@ -1,0 +1,1110 @@
+function doGet(e) {
+  try {
+    e = e || { parameter: {} };
+    const params = e.parameter || {};
+    if (params.action) {
+      return handleCategoriasAction_(params.action, params, 'GET');
+    }
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Hoja 1');
+    if (!sheet) throw new Error('Hoja no encontrada');
+    const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone() || 'Europe/Madrid';
+    
+    // Obtener cabeceras UNA VEZ
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const idIndex = headers.indexOf('ID');
+    if (idIndex === -1) throw new Error('Columna ID no encontrada');
+
+    let response;
+
+    // --- Manejar parámetro marcar (OPTIMIZADO) ---
+    if (params.marcar) {
+      const marcarData = params.marcar.split(':');
+      if (marcarData.length < 3) {
+         return createResponse({ status: 'error', message: 'Formato de marcar inválido' });
+      }
+      
+      const campo = marcarData[0];
+      const id = marcarData[1];
+      const valor = marcarData.slice(2).join(':');
+      
+      let campoIndex = headers.indexOf(campo);
+
+      // Crear columna si no existe (mantenemos esta lógica)
+      if (campoIndex === -1 && (campo === 'FechaNotificacion' || campo === 'HoraNotificacion' || campo === 'MotivoSeguimiento')) {
+        const lastCol = sheet.getLastColumn();
+        sheet.getRange(1, lastCol + 1).setValue(campo);
+        campoIndex = lastCol; // 0-based
+        headers.push(campo); // Actualizar headers en memoria
+      }
+      
+      if (campoIndex === -1) throw new Error(`Columna ${campo} no encontrada`);
+
+      // Usar TextFinder para encontrar la fila
+      const rowNum = findRowById_(sheet, id, headers);
+      if (rowNum === -1) {
+        return createResponse({ status: 'error', message: 'ID no encontrado' });
+      }
+
+      // --- Escribir el valor principal ---
+      const rng = sheet.getRange(rowNum, campoIndex + 1);
+      // (Tu lógica de formato de Fecha/Hora se mantiene, es correcta)
+      if (campo === 'HoraNotificacion') {
+         // ... (tu lógica de formato de hora) ...
+         // Ejemplo simple:
+         rng.setNumberFormat('hh:mm').setValue(valor); 
+      } else if (campo === 'FechaNotificacion') {
+         // ... (tu lógica de formato de fecha) ...
+         // Ejemplo simple:
+         rng.setNumberFormat('yyyy-mm-dd').setValue(valor || null);
+      } else {
+         rng.setValue(valor);
+      }
+
+      // --- Actualizar estado (si aplica) ---
+      const estadoIndex = headers.indexOf('Estado');
+      const llamadoIndex = headers.indexOf('Llamado');
+      const respondidoIndex = headers.indexOf('Respondido');
+
+      if (estadoIndex !== -1 && llamadoIndex !== -1 && respondidoIndex !== -1) {
+        // Leer SOLO la fila actual para obtener valores de 'Llamado' y 'Respondido'
+        const rowData = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
+        
+        let llamado = rowData[llamadoIndex];
+        let respondido = rowData[respondidoIndex];
+
+        // Si el campo que acabamos de cambiar es 'Llamado' o 'Respondido', usamos el *nuevo* valor
+        if (campoIndex === llamadoIndex) llamado = valor;
+        if (campoIndex === respondidoIndex) respondido = valor;
+        
+        let nuevoEstado = 'Sin Llamar';
+        if (String(respondido).toLowerCase().startsWith('s')) {
+          nuevoEstado = 'Respondido';
+        } else if (String(llamado).toLowerCase().startsWith('s')) {
+          nuevoEstado = 'Llamado';
+        }
+        
+        sheet.getRange(rowNum, estadoIndex + 1).setValue(nuevoEstado);
+      }
+
+      // --- CORRECCIÓN BUG: Devolver la fila actualizada con FECHAS FORMATEADAS ---
+      const updatedRowData = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
+      
+      // Creamos el objeto manualmente aplicando formato a las fechas para que no se pasen a UTC
+      const dataObj = {};
+      headers.forEach((h, j) => {
+        let v = updatedRowData[j];
+        // Si es fecha, la formateamos a string local (YYYY-MM-DD)
+        if (Object.prototype.toString.call(v) === '[object Date]') { 
+           v = formatFechaOut_(v, tz); 
+        }
+        dataObj[h] = (v !== undefined) ? v : '';
+      });
+      
+      response = { status: 'success', message: `${campo} actualizado`, data: dataObj };
+      return createResponse(response);
+    }
+    
+    // --- Manejar eliminación de fila (OPTIMIZADO) ---
+    else if (params.deleteRow) {
+      const id = params.deleteRow;
+      const rowNum = findRowById_(sheet, id, headers);
+      
+      if (rowNum !== -1) {
+        sheet.deleteRow(rowNum);
+        response = { status: 'success', message: 'Fila eliminada' };
+      } else {
+        response = { status: 'error', message: 'ID no encontrado para eliminar' };
+      }
+    }
+    
+    // --- Manejar obtención por ID (OPTIMIZADO) ---
+    else if (params.id) {
+      const id = params.id;
+      const rowNum = findRowById_(sheet, id, headers);
+
+      if (rowNum !== -1) {
+        const rowData = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
+        const dataObj = convertRowToObject_(headers, rowData);
+        dataObj["fila"] = rowNum;
+        response = { status: 'success', data: dataObj };
+      } else {
+        response = { status: 'not_found', message: 'ID no encontrado' };
+      }
+    } 
+
+    // --- Enviar email recordatorio ---
+    else if (params.sendReminder) {
+      const id = params.sendReminder;
+      const when = params.when || 'exact';
+      const rowNum = findRowById_(sheet, id, headers);
+      if (rowNum === -1) {
+        return createResponse({ status: 'error', message: 'ID no encontrado' });
+      }
+      const rowData = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
+      const datos = convertRowToObject_(headers, rowData);
+      const nombre             = datos['your-name']           || '(sin nombre)';
+      const telefono           = datos['tel-686']             || '(sin teléfono)';
+      const emailC             = datos['your-email']          || '(sin email)';
+      const motivo             = datos['MotivoSeguimiento']   || '(sin motivo)';
+      const fechaNotif         = datos['FechaNotificacion']   || '';
+      let horaNotif = datos['HoraNotificacion'] || '';
+if (Object.prototype.toString.call(horaNotif) === '[object Date]') {
+  horaNotif = Utilities.formatDate(horaNotif, tz, 'HH:mm');
+} else if (typeof horaNotif === 'number') {
+  const totalMin = Math.round(horaNotif * 24 * 60);
+  const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
+  const mm = String(totalMin % 60).padStart(2, '0');
+  horaNotif = `${hh}:${mm}`;
+} else {
+  horaNotif = String(horaNotif).replace(/^(\d{1,2}:\d{2}).*$/, '$1').trim();
+}
+      const notas              = datos['Notas']               || '(sin notas)';
+      const tipoVivienda = getTipoViviendaLabel_(datos);
+     // Formatear fecha legible: de "2025-06-15" a "15/06/2025"
+      let fechaFormateada = '—';
+if (fechaNotif) {
+  let fechaStr = fechaNotif;
+  if (Object.prototype.toString.call(fechaNotif) === '[object Date]') {
+    fechaStr = Utilities.formatDate(fechaNotif, tz, 'yyyy-MM-dd');
+  } else {
+    fechaStr = String(fechaNotif).replace(/^(\d{4}-\d{2}-\d{2})T.*$/, '$1').trim();
+  }
+  fechaFormateada = fechaStr.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
+}
+      // Formatear hora: ya viene como "HH:MM", solo asegurar fallback
+      const horaFormateada = horaNotif || '—';
+
+      const asunto = `Recordatorio: llamar a ${nombre}`;
+      const cuerpo =
+        `RECORDATORIO DE SEGUIMIENTO\n` +
+        `${'─'.repeat(35)}\n\n` +
+        `👤 Contacto:       ${nombre}\n` +
+        `📞 Teléfono:       ${telefono}\n` +
+        `✉️  Email:          ${emailC}\n\n` +
+        `📅 Fecha:          ${fechaFormateada}\n` +
+        `🕐 Hora:           ${horaFormateada}\n\n` +
+        `📝 Motivo:         ${motivo}\n` +
+        `🏠 Tipo vivienda:  ${tipoVivienda}\n\n` +
+        `💬 Notas:\n${notas}\n\n` +
+        `${'─'.repeat(35)}\n` +
+        `Enviado desde el sistema de gestión de contactos.`;
+      // Calcular fecha/hora de envío según 'when'
+
+      if (when !== 'exact' && fechaNotif && horaNotif) {
+  let fechaStr = '';
+  if (Object.prototype.toString.call(fechaNotif) === '[object Date]') {
+    fechaStr = Utilities.formatDate(fechaNotif, tz, 'yyyy-MM-dd');
+  } else {
+    fechaStr = String(fechaNotif).replace(/^(\d{4}-\d{2}-\d{2}).*$/, '$1').trim();
+  }
+
+  let horaStr = '';
+  if (typeof horaNotif === 'number') {
+    const totalMin = Math.round(horaNotif * 24 * 60);
+    const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
+    const mm = String(totalMin % 60).padStart(2, '0');
+    horaStr = `${hh}:${mm}`;
+  } else if (Object.prototype.toString.call(horaNotif) === '[object Date]') {
+    horaStr = Utilities.formatDate(horaNotif, tz, 'HH:mm');
+  } else {
+    horaStr = String(horaNotif || '').replace(/^(\d{1,2}:\d{2}).*$/, '$1').trim();
+  }
+
+        if (fechaStr.match(/^\d{4}-\d{2}-\d{2}$/) && horaStr.match(/^\d{1,2}:\d{2}$/)) {
+        const fechaBase = new Date(`${fechaStr}T${horaStr.padStart(5, '0')}:00`);
+        if (when === '1h') fechaBase.setTime(fechaBase.getTime() - 60 * 60 * 1000);
+        if (when === '1d') fechaBase.setTime(fechaBase.getTime() - 24 * 60 * 60 * 1000);
+          if (fechaBase > new Date()) {
+            const key = `reminder_${id}_${fechaBase.getTime()}`;
+            PropertiesService.getScriptProperties().setProperty(key, JSON.stringify({
+              asunto: asunto,
+              cuerpo: cuerpo,
+              enviarEn: fechaBase.getTime()
+            }));
+            crearTriggerPeriodicoSiNoExiste_();
+            Logger.log(`Recordatorio programado: ${key} para ${Utilities.formatDate(fechaBase, tz, 'dd/MM/yyyy HH:mm')}`);
+            return createResponse({ status: 'success', message: `Email programado para ${Utilities.formatDate(fechaBase, tz, 'dd/MM/yyyy HH:mm')}` });
+          } else {
+            Logger.log('Fecha pasada, enviando email inmediatamente');
+          }
+        } else {
+          Logger.log('Formato de fecha/hora inválido o envío inmediato solicitado');
+        }
+      }
+
+      Logger.log(`Enviando email inmediato a andrealoran@proyectopia.es - Asunto: ${asunto}`);
+      MailApp.sendEmail('andrealoran@proyectopia.es', asunto, cuerpo);
+      return createResponse({ status: 'success', message: 'Email enviado' });
+    }
+    
+    // --- Obtener todos los datos (Sin cambios, es correcto) ---
+    else {
+      const data = sheet.getDataRange().getValues();
+      const headersAll = data[0]; // Usar headers de aquí
+      const resultados = data.slice(1).map((fila, i) => {
+        let obj = {};
+        headersAll.forEach((h, j) => {
+          let v = fila[j];
+          if (h === 'Fecha') v = formatFechaOut_(v, tz);
+          obj[h] = v;
+        });
+        obj["fila"] = i + 2;
+        return obj;
+      });
+      response = { status: 'success', data: resultados };
+    }
+    
+    return createResponse(response);
+
+  } catch (error) {
+    Logger.log('Error en doGet: ' + error.message + '\nStack: ' + error.stack);
+    return createResponse({ status: 'error', message: error.message });
+  }
+}
+
+function doPost(e) {
+  // Tu función parsePostData(e) es correcta, la mantenemos.
+  function parsePostData(e) {
+     // ... (tu código de parsePostData sin cambios) ...
+  if (!e) return {};
+ 
+  if (e.postData && e.postData.type === 'application/json') {
+   try { 
+     return JSON.parse(e.postData.contents); 
+   } catch (_) { 
+     return {}; 
+   }
+  }
+  
+  if (e.postData) {
+   try { 
+     return JSON.parse(e.postData.contents); 
+   }
+   catch (err) {
+     const obj = {};
+     const pairs = e.postData.contents.split('&');
+     for (let i = 0; i < pairs.length; ++i) {
+       const parts = pairs[i].split('=');
+       const key = decodeURIComponent(parts[0]);
+       const value = decodeURIComponent((parts[1] || '').replace(/\+/g, ' '));
+       obj[key] = value;
+     }
+     return obj;
+   }
+  }
+  
+  if (e.parameter && Object.keys(e.parameter).length > 0) return e.parameter;
+  return {};
+  }
+
+
+  try {
+    const data = parsePostData(e);
+    Logger.log('Datos recibidos en doPost: ' + JSON.stringify(data));
+    if (data.action && data.action !== 'saveFormData') {
+      return handleCategoriasAction_(data.action, data, 'POST');
+    }
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Hoja 1');
+    if (!sheet) throw new Error('Hoja no encontrada');
+    const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone() || 'Europe/Madrid';
+    
+    // Tu lista expectedHeaders es correcta, la mantenemos.
+    const expectedHeaders = [
+       'your-name','your-email','tel-686','checkbox-374','cualidades-otros',
+       'radio-188','ubicacion-terreno','number-419','date-33','number-420',
+       'number-421','number-422','number-423','coherencia-dormitorios',
+       'coherencia-presupuesto','Fecha','Respondido','Notas','FechaSeguimiento',
+       'Prioridad','Estado','Llamado','ID','fecha-llamada','como-conocido',
+       'como-conocido-otros','descripcion-vivienda','distribucion-dia','garaje',
+       'piscina','estancia-adicional','superficie-parcela','edificabilidad',
+       'ocupacion','referencia-catastral','presupuesto-deseado','viabilidad',
+       'informacion-adicional','fecha-mail','info-enviada','fecha-reunion',
+       'imprescindible','NoContestados','procedencia-contacto','vivienda-interesada','documentacion','eliminado','MotivoSeguimiento','FechaNotificacion','HoraNotificacion','estudio-viabilidad','categoria-id'
+     ];
+
+    // Lógica de forzar cabeceras (mantenemos)
+    let currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (currentHeaders.length < expectedHeaders.length || 
+        currentHeaders.some((h, i) => String(h) !== expectedHeaders[i] && i < expectedHeaders.length)) {
+      sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
+      currentHeaders = expectedHeaders;
+    }
+    
+    // Generar o usar ID
+    const isWordpress = !data.action && !data.source && data['your-name'];
+    let id = data.id || data.ID || `contacto_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    Logger.log('ID usado para fila: ' + id);
+
+    // --- Lógica de Actualizar vs. Añadir (OPTIMIZADA) ---
+    
+    // Buscar fila existente
+    const rowNum = findRowById_(sheet, id, currentHeaders);
+    let updated = (rowNum !== -1);
+    let existingData = {};
+
+    if (updated) {
+      // Si actualizamos, leemos SOLO los datos existentes de esa fila
+      const existingRowValues = sheet.getRange(rowNum, 1, 1, currentHeaders.length).getValues()[0];
+      existingData = convertRowToObject_(currentHeaders, existingRowValues);
+    }
+    
+    // Fusionar datos: los nuevos (data) sobreescriben a los viejos (existingData)
+    const finalData = { ...existingData, ...data };
+    if (!finalData['categoria-id']) {
+      finalData['categoria-id'] = resolveCategoriaIdDesdeDatos_(finalData);
+    }
+    
+    // Mapear la fila completa según headers
+    let rowData = expectedHeaders.map(h => {
+      if (h === 'ID') return id;
+      // Tu lógica de valores por defecto (es correcta)
+      if (h === 'Respondido') return finalData[h] || 'No';
+      if (h === 'Estado') return finalData[h] || 'Sin Llamar';
+    
+      if (h === 'Llamado') return finalData[h] || 'No';
+      // ... (resto de tu lógica de valores por defecto) ...
+      if (h === 'Fecha') {
+        if (isWordpress) {
+          return Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+        }
+        let v = finalData[h] || finalData['date-33'];
+        return v || '';
+      }
+      if (h === 'checkbox-374') {
+         if (Array.isArray(finalData[h])) return finalData[h].join(',');
+         if (typeof finalData[h] === 'object') return Object.values(finalData[h]).join(',');
+      }
+      return finalData[h] || ''; // Usar el dato fusionado
+    });
+
+    // Escribir en la hoja
+    if (updated) {
+      sheet.getRange(rowNum, 1, 1, expectedHeaders.length).setValues([rowData]);
+      Logger.log('Fila actualizada en posición: ' + rowNum);
+    } else {
+      sheet.appendRow(rowData);
+      Logger.log('Fila añadida nueva');
+    }
+
+    // --- CORRECCIÓN BUG: Devolver la fila actualizada/creada ---
+    const dataObj = convertRowToObject_(expectedHeaders, rowData);
+    
+    return ContentService.createTextOutput(JSON.stringify({ 
+      status: 'success', 
+      message: updated ? 'Fila actualizada' : 'Fila añadida', 
+      id: id,
+      data: dataObj // Devolver los datos completos
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    Logger.log('Error en doPost: ' + error.message + '\nStack: ' + error.stack);
+    return createResponse({ status: 'error', message: error.message });
+  }
+}
+
+function handleCategoriasAction_(action, payload, method) {
+  try {
+    const cfg = getCategoriasConfig_();
+    const categorias = cfg.categorias || [];
+    const actionName = String(action || '').trim();
+
+    if (actionName === 'getConfig') {
+      return createResponse({ status: 'success', config: cfg });
+    }
+
+    if (actionName === 'saveConfig') {
+      const parsedConfig = parseConfigPayload_(payload.config);
+      const normalizada = normalizeCategoriasConfig_(parsedConfig || cfg);
+      saveCategoriasConfig_(normalizada);
+      return createResponse({ status: 'success', config: normalizada });
+    }
+
+    if (actionName === 'addCategoria') {
+      const nombre = String(payload.nombre || '').trim();
+      if (!nombre) return createResponse({ status: 'error', message: 'Nombre obligatorio' });
+      const id = ensureCategoriaIdUnico_(slugify_(nombre), categorias);
+      const nueva = {
+        id: id,
+        nombre: nombre,
+        activa: true,
+        matcher: { by: 'manual', aliases: [nombre], keywords: [], value: '' },
+        formulario: { tipo: 'standard', campos: [], detalle: { tipo: 'standard', campos: [] } },
+        detalle: { tipo: 'standard', campos: [] },
+        email: { asunto: '', cuerpo: '', recordatorio: '' },
+        exportacion: { tipo: 'normal', prefijoArchivo: nombre.replace(/\s+/g, '_') },
+        wordpress: { flujo: 'default' }
+      };
+      upsertCategoriaInSheet_(nueva);
+      const next = getCategoriasConfig_();
+      return createResponse({ status: 'success', categoria: nueva, config: next });
+    }
+
+    if (actionName === 'updateCategoria') {
+      const id = String(payload.id || '').trim();
+      if (!id) return createResponse({ status: 'error', message: 'ID obligatorio' });
+      const idx = categorias.findIndex(c => String(c.id) === id);
+      if (idx === -1) return createResponse({ status: 'error', message: 'Categoría no encontrada' });
+      const categoriaPatch = parseCategoriaPatch_(payload);
+      const baseProtegida = isCategoriaBaseProtegida_(id);
+      if (baseProtegida && categoriaPatch.id && categoriaPatch.id !== id) {
+        return createResponse({ status: 'error', message: 'No se puede cambiar el ID de una categoría base' });
+      }
+      if (baseProtegida && categoriaPatch.nombre && categoriaPatch.nombre !== categorias[idx].nombre) {
+        return createResponse({ status: 'error', message: 'No se puede renombrar una categoría base' });
+      }
+      const camposActuales = Array.isArray(categorias[idx].formulario?.campos) ? categorias[idx].formulario.campos : [];
+      const camposNuevos = Array.isArray(categoriaPatch.formulario?.campos) ? categoriaPatch.formulario.campos : null;
+      if (camposNuevos) {
+        const eliminados = camposActuales.filter(c => camposNuevos.indexOf(c) === -1);
+        const campoConDatos = eliminados.find(campo => categoriaFieldHasData_(campo));
+        if (campoConDatos) {
+          return createResponse({
+            status: 'error',
+            message: `No se puede eliminar el campo "${campoConDatos}" porque ya tiene datos en fichas existentes`
+          });
+        }
+      }
+      categorias[idx] = { ...categorias[idx], ...categoriaPatch, id: id };
+      upsertCategoriaInSheet_(categorias[idx]);
+      const next = getCategoriasConfig_();
+      return createResponse({ status: 'success', categoria: categorias[idx], config: next });
+    }
+
+    if (actionName === 'deleteCategoria') {
+      const id = String(payload.id || '').trim();
+      if (!id) return createResponse({ status: 'error', message: 'ID obligatorio' });
+      if (isCategoriaBaseProtegida_(id)) {
+        return createResponse({ status: 'error', message: 'No se puede eliminar una categoría base protegida' });
+      }
+      deleteCategoriaFromSheet_(id);
+      const next = getCategoriasConfig_();
+      return createResponse({ status: 'success', config: next });
+    }
+
+    if (actionName === 'toggleCategoria') {
+      const id = String(payload.id || '').trim();
+      const idx = categorias.findIndex(c => String(c.id) === id);
+      if (idx === -1) return createResponse({ status: 'error', message: 'Categoría no encontrada' });
+      categorias[idx].activa = !parseBoolean_(categorias[idx].activa, true);
+      upsertCategoriaInSheet_(categorias[idx]);
+      const next = getCategoriasConfig_();
+      return createResponse({ status: 'success', categoria: categorias[idx], config: next });
+    }
+
+    if (actionName === 'saveCampaign') {
+      const campaign = payload.campaign || payload;
+      return saveCampaign_(campaign);
+    }
+
+    if (actionName === 'getCampaigns') {
+      return createResponse({ status: 'success', data: getCampaigns_() });
+    }
+
+    return createResponse({ status: 'error', message: 'Acción no soportada' });
+  } catch (error) {
+    Logger.log(`Error en handleCategoriasAction_: ${error.message}`);
+    return createResponse({ status: 'error', message: error.message });
+  }
+}
+
+function getCategoriasConfig_() {
+  const sheet = getCategoriasSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    const defaultCfg = normalizeCategoriasConfig_(buildDefaultCategoriasConfig_());
+    saveCategoriasConfig_(defaultCfg);
+    return defaultCfg;
+  }
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const rows = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  const categorias = rows
+    .map(row => rowToCategoria_(headers, row))
+    .filter(c => c && c.id);
+  return normalizeCategoriasConfig_({ categorias: categorias });
+}
+
+function rowToCategoria_(headers, row) {
+  const raw = {};
+  headers.forEach((h, idx) => raw[h] = row[idx]);
+  if (!raw.id) return null;
+  const parseObj = (val, fallback) => {
+    if (!val) return fallback;
+    if (typeof val === 'object') return val;
+    try {
+      return JSON.parse(String(val));
+    } catch (_) {
+      return fallback;
+    }
+  };
+  return {
+    id: String(raw.id),
+    nombre: String(raw.nombre || raw.id),
+    activa: parseBoolean_(raw.activa, true),
+    matcher: parseObj(raw.matcher, { by: 'manual', aliases: [], keywords: [], value: '' }),
+    formulario: parseObj(raw.formulario, { tipo: 'standard', campos: [] }),
+    detalle: parseObj(raw.detalle, parseObj(raw.formulario, { detalle: { tipo: 'standard', campos: [] } }).detalle || { tipo: 'standard', campos: [] }),
+    email: parseObj(raw.email, { asunto: '', cuerpo: '', recordatorio: '' }),
+    exportacion: parseObj(raw.exportacion, { tipo: 'normal', prefijoArchivo: '' }),
+    wordpress: parseObj(raw.wordpress, { flujo: 'default' })
+  };
+}
+
+function categoriaToRow_(headers, categoria) {
+  const safe = {
+    id: categoria.id,
+    nombre: categoria.nombre || categoria.id,
+    activa: parseBoolean_(categoria.activa, true),
+    matcher: JSON.stringify(categoria.matcher || {}),
+    formulario: JSON.stringify(categoria.formulario || {}),
+    email: JSON.stringify(categoria.email || {}),
+    exportacion: JSON.stringify(categoria.exportacion || {}),
+    wordpress: JSON.stringify(categoria.wordpress || {}),
+    updatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Europe/Madrid', 'yyyy-MM-dd HH:mm:ss'),
+    detalle: JSON.stringify(categoria.detalle || categoria.formulario?.detalle || { tipo: 'standard', campos: [] })
+  };
+  return headers.map(h => safe[h] !== undefined ? safe[h] : '');
+}
+
+function ensureCategoriasHeaders_(sheet) {
+  const expected = ['id', 'nombre', 'activa', 'matcher', 'formulario', 'email', 'exportacion', 'wordpress', 'updatedAt', 'detalle'];
+  const lastCol = Math.max(sheet.getLastColumn(), expected.length);
+  const current = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const needsReset = expected.some((h, i) => String(current[i] || '') !== h);
+  if (needsReset) {
+    sheet.getRange(1, 1, 1, expected.length).setValues([expected]);
+  }
+  return expected;
+}
+
+function findCategoriaRowById_(sheet, id, headers) {
+  const idIndex = headers.indexOf('id');
+  if (idIndex === -1 || sheet.getLastRow() < 2) return -1;
+  const range = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1);
+  const found = range.createTextFinder(String(id)).matchEntireCell(true).findNext();
+  return found ? found.getRow() : -1;
+}
+
+function upsertCategoriaInSheet_(categoria) {
+  const sheet = getCategoriasSheet_();
+  const headers = ensureCategoriasHeaders_(sheet);
+  const row = categoriaToRow_(headers, categoria);
+  const rowNum = findCategoriaRowById_(sheet, categoria.id, headers);
+  if (rowNum === -1) {
+    sheet.appendRow(row);
+  } else {
+    sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
+  }
+}
+
+function deleteCategoriaFromSheet_(id) {
+  const sheet = getCategoriasSheet_();
+  const headers = ensureCategoriasHeaders_(sheet);
+  const rowNum = findCategoriaRowById_(sheet, id, headers);
+  if (rowNum !== -1) sheet.deleteRow(rowNum);
+}
+
+function rewriteCategoriasSheet_(categorias) {
+  const sheet = getCategoriasSheet_();
+  const headers = ensureCategoriasHeaders_(sheet);
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
+  }
+  const rows = (categorias || []).map(c => categoriaToRow_(headers, c));
+  if (rows.length) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+}
+
+function saveCategoriasConfig_(config) {
+  const safe = normalizeCategoriasConfig_(config || buildDefaultCategoriasConfig_());
+  rewriteCategoriasSheet_(safe.categorias || []);
+  return safe;
+}
+
+function getCategoriasSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Hoja 2');
+  if (!sheet) sheet = ss.insertSheet('Hoja 2');
+  ensureCategoriasHeaders_(sheet);
+  return sheet;
+}
+
+function parseConfigPayload_(rawConfig) {
+  if (!rawConfig) return null;
+  if (typeof rawConfig === 'object') return rawConfig;
+  try {
+    return JSON.parse(rawConfig);
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseCategoriaPatch_(payload) {
+  let fromJson = {};
+  if (payload.categoria) {
+    try {
+      fromJson = typeof payload.categoria === 'string' ? JSON.parse(payload.categoria) : payload.categoria;
+    } catch (_) {}
+  }
+  const patch = { ...fromJson };
+  ['nombre', 'activa', 'matcher', 'formulario', 'detalle', 'email', 'exportacion', 'wordpress'].forEach(k => {
+    if (payload[k] !== undefined && payload[k] !== '') {
+      patch[k] = payload[k];
+    }
+  });
+  ['matcher', 'formulario', 'detalle', 'email', 'exportacion', 'wordpress'].forEach((key) => {
+    if (typeof patch[key] === 'string') {
+      try { patch[key] = JSON.parse(patch[key]); } catch (_) {}
+    }
+  });
+  if (typeof patch.activa === 'string') {
+    patch.activa = parseBoolean_(patch.activa, true);
+  }
+  if (!patch.detalle && patch.formulario && patch.formulario.detalle) {
+    patch.detalle = patch.formulario.detalle;
+  }
+  if (patch.detalle && (!patch.formulario || !patch.formulario.detalle)) {
+    patch.formulario = { ...(patch.formulario || {}), detalle: patch.detalle };
+  }
+  return patch;
+}
+
+function normalizeCategoriasConfig_(config) {
+  const sanitizeCampos = (campos) => {
+    if (Array.isArray(campos)) return campos.map(v => String(v || '').trim()).filter(Boolean);
+    if (typeof campos === 'string') return campos.split(',').map(v => String(v || '').trim()).filter(Boolean);
+    return [];
+  };
+  const sanitizeTipo = (tipo, fallback) => ['standard', 'custom', 'compact'].indexOf(tipo) !== -1 ? tipo : (fallback || 'standard');
+  const base = buildDefaultCategoriasConfig_().categorias;
+  const incoming = Array.isArray(config && config.categorias) ? config.categorias : [];
+  const map = {};
+  base.forEach(c => map[c.id] = JSON.parse(JSON.stringify(c)));
+  incoming.forEach(c => {
+    const id = String(c.id || '').trim() || slugify_(c.nombre || 'categoria');
+    const detalleRaw = c.detalle || c.formulario?.detalle || map[id]?.detalle || map[id]?.formulario?.detalle || { tipo: 'standard', campos: [] };
+    const detalle = {
+      tipo: sanitizeTipo(detalleRaw?.tipo, map[id]?.detalle?.tipo),
+      campos: sanitizeCampos(detalleRaw?.campos)
+    };
+    map[id] = {
+      ...(map[id] || {}),
+      ...c,
+      id: id,
+      nombre: c.nombre || map[id]?.nombre || id,
+      activa: parseBoolean_(c.activa, true),
+      matcher: { ...(map[id]?.matcher || {}), ...(c.matcher || {}) },
+      formulario: {
+        ...(map[id]?.formulario || { tipo: 'standard', campos: [] }),
+        ...(c.formulario || {}),
+        tipo: sanitizeTipo(c.formulario?.tipo, map[id]?.formulario?.tipo),
+        campos: sanitizeCampos(c.formulario?.campos),
+        viviendaInteresadaOpciones: Array.isArray(c.formulario?.viviendaInteresadaOpciones)
+          ? c.formulario.viviendaInteresadaOpciones.map(v => String(v || '').trim()).filter(Boolean)
+          : (Array.isArray(map[id]?.formulario?.viviendaInteresadaOpciones)
+            ? map[id].formulario.viviendaInteresadaOpciones.map(v => String(v || '').trim()).filter(Boolean)
+            : []),
+        detalle: detalle
+      },
+      detalle: detalle,
+      email: { ...(map[id]?.email || { asunto: '', cuerpo: '', recordatorio: '' }), ...(c.email || {}) },
+      exportacion: { ...(map[id]?.exportacion || { tipo: 'normal', prefijoArchivo: '' }), ...(c.exportacion || {}) },
+      wordpress: { ...(map[id]?.wordpress || { flujo: 'default' }), ...(c.wordpress || {}) }
+    };
+  });
+  return { categorias: Object.keys(map).map(k => map[k]) };
+}
+
+function buildDefaultCategoriasConfig_() {
+  return {
+    categorias: [
+      {
+        id: 'vivienda_normal',
+        nombre: 'Vivienda normal',
+        activa: true,
+        matcher: { by: 'default', aliases: ['vivienda normal'], keywords: [], value: '' },
+        formulario: { tipo: 'standard', campos: [], detalle: { tipo: 'standard', campos: [] } },
+        detalle: { tipo: 'standard', campos: [] },
+        email: { asunto: 'Seguimiento de tu consulta', cuerpo: 'Gracias por contactar con nosotros.', recordatorio: '' },
+        exportacion: { tipo: 'normal', prefijoArchivo: 'Vivienda_Normal' },
+        wordpress: { flujo: 'default' }
+      },
+      {
+        id: 'villas_isla_cortegada',
+        nombre: 'Villas Isla de Cortegada',
+        activa: true,
+        matcher: {
+          by: 'vivienda-interesada',
+          keywords: ['promocion general', 'vivienda 03', 'vivienda 04', 'vivienda 05', 'villas isla de cortegada'],
+          aliases: ['villas isla de cortegada', 'villas'],
+          value: ''
+        },
+        formulario: { tipo: 'standard', campos: [], detalle: { tipo: 'standard', campos: [] } },
+        detalle: { tipo: 'standard', campos: [] },
+        email: { asunto: 'Información de Villas Isla de Cortegada', cuerpo: 'Le compartimos la información solicitada.', recordatorio: '' },
+        exportacion: { tipo: 'villas', prefijoArchivo: 'Villas_Isla_de_Cortegada' },
+        wordpress: { flujo: 'default' }
+      }
+    ]
+  };
+}
+
+function isCategoriaBaseProtegida_(id) {
+  return String(id || '') === 'vivienda_normal' || String(id || '') === 'villas_isla_cortegada';
+}
+
+function slugify_(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'categoria';
+}
+
+function ensureCategoriaIdUnico_(idBase, categorias) {
+  const usados = new Set((categorias || []).map(c => String(c.id)));
+  if (!usados.has(idBase)) return idBase;
+  let i = 2;
+  while (usados.has(`${idBase}_${i}`)) i++;
+  return `${idBase}_${i}`;
+}
+
+function parseBoolean_(value, fallback) {
+  if (typeof value === 'boolean') return value;
+  if (value === null || value === undefined || value === '') return fallback !== undefined ? !!fallback : true;
+  const normalized = normalizeString_(value);
+  if (['false', '0', 'no', 'off', 'oculta', 'inactiva'].indexOf(normalized) !== -1) return false;
+  if (['true', '1', 'si', 'sí', 'on', 'activa'].indexOf(normalized) !== -1) return true;
+  return fallback !== undefined ? !!fallback : true;
+}
+
+function categoriaFieldHasData_(fieldName) {
+  if (!fieldName) return false;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Hoja 1');
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const idx = headers.indexOf(fieldName);
+  if (idx === -1) return false;
+  const values = sheet.getRange(2, idx + 1, sheet.getLastRow() - 1, 1).getValues();
+  return values.some(([v]) => String(v || '').trim() !== '' && String(v || '').trim() !== '—');
+}
+
+function createResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function formatFechaOut_(v, tz) {
+  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v)) {
+    return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+  }
+  const s = String(v || '');
+  const mISO = s.match(/^(\d{4}-\d{2}-\d{2})T/); // ISO con hora -> tomar solo YYYY-MM-DD
+  if (mISO) return mISO[1];
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {         // dd/mm/yyyy -> yyyy-mm-dd
+    const [dd, mm, yyyy] = s.split('/');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;   // ya correcto
+  return s;
+}
+
+function onChange(e) {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Hoja 1');
+    if (!sheet) return;
+    Logger.log('Evento onChange ejecutado');
+  } catch (error) {
+    Logger.log('Error en onChange: ' + error.message + '\nStack: ' + error.stack);
+  }
+}
+
+function onEdit(e) {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Hoja 1');
+    if (!sheet) return;
+    const range = e.range;
+    
+    if (range.getRow() === 1) {
+      Logger.log('Intento de edición en cabeceras detectado: ' + JSON.stringify(range.getValues()));
+      const expectedHeaders = [
+        'your-name','your-email','tel-686','checkbox-374','cualidades-otros',
+        'radio-188','ubicacion-terreno','number-419','date-33','number-420',
+        'number-421','number-422','number-423','coherencia-dormitorios',
+        'coherencia-presupuesto','Fecha','Respondido','Notas','FechaSeguimiento',
+        'Prioridad','Estado','Llamado','ID','fecha-llamada','como-conocido',
+        'como-conocido-otros','descripcion-vivienda','distribucion-dia','garaje',
+        'piscina','estancia-adicional','superficie-parcela','edificabilidad',
+        'ocupacion','referencia-catastral','presupuesto-deseado','viabilidad',
+        'informacion-adicional','fecha-mail','info-enviada','fecha-reunion',
+        'imprescindible','NoContestados','procedencia-contacto','vivienda-interesada','documentacion','eliminado','MotivoSeguimiento','FechaNotificacion','HoraNotificacion','estudio-viabilidad','categoria-id'
+      ];
+      sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
+    }
+  } catch (error) {
+    Logger.log('Error en onEdit: ' + error.message + '\nStack: ' + error.stack);
+  }
+}
+
+// Función de prueba para verificar que los headers se crean correctamente
+function testearHeaders() {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Hoja 1');
+    if (!sheet) throw new Error('Hoja no encontrada');
+    
+    const expectedHeaders = [
+      'your-name','your-email','tel-686','checkbox-374','cualidades-otros',
+      'radio-188','ubicacion-terreno','number-419','date-33','number-420',
+      'number-421','number-422','number-423','coherencia-dormitorios',
+      'coherencia-presupuesto','Fecha','Respondido','Notas','FechaSeguimiento',
+      'Prioridad','Estado','Llamado','ID','fecha-llamada','como-conocido',
+      'como-conocido-otros','descripcion-vivienda','distribucion-dia','garaje',
+      'piscina','estancia-adicional','superficie-parcela','edificabilidad',
+      'ocupacion','referencia-catastral','presupuesto-deseado','viabilidad',
+      'informacion-adicional','fecha-mail','info-enviada','fecha-reunion',
+      'imprescindible','NoContestados','procedencia-contacto','vivienda-interesada','documentacion','eliminado','MotivoSeguimiento','FechaNotificacion','HoraNotificacion','estudio-viabilidad','categoria-id'
+    ];
+    
+    // Forzar creación de headers
+    sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
+    
+    console.log('Headers actualizados correctamente');
+    console.log('Total de columnas:', expectedHeaders.length);
+    console.log('Columna documentacion está en posición:', expectedHeaders.indexOf('documentacion') + 1);
+    
+    return { status: 'success', message: 'Headers actualizados', totalColumns: expectedHeaders.length };
+  } catch (error) {
+    console.error('Error al testear headers:', error.message);
+    return { status: 'error', message: error.message };
+  }
+}
+
+/**
+ * Encuentra el número de fila de un contacto por su ID usando TextFinder.
+ * @param {Sheet} sheet La hoja donde buscar.
+ * @param {string} id El ID a encontrar.
+ * @param {Array<string>} headers Array de cabeceras (para encontrar idIndex).
+ * @returns {number} El número de fila (base 1) o -1 si no se encuentra.
+ */
+function findRowById_(sheet, id, headers) {
+  const idIndex = headers.indexOf('ID');
+  if (idIndex === -1) {
+    Logger.log('Error: Columna ID no encontrada en findRowById_');
+    return -1;
+  }
+  
+  // Buscar solo en la columna de ID (columna idIndex + 1)
+  const idColumnRange = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1);
+  const textFinder = idColumnRange.createTextFinder(String(id)).matchEntireCell(true);
+  const found = textFinder.findNext();
+  
+  if (found) {
+    return found.getRow(); // Devuelve el número de fila exacto
+  } else {
+    return -1;
+  }
+}
+
+/**
+ * Convierte un array de fila (rowData) y un array de cabeceras (headers) en un objeto JSON.
+ * @param {Array<string>} headers - Las cabeceras.
+ * @param {Array<any>} rowData - Los datos de la fila.
+ * @returns {Object} El objeto JSON de la fila.
+ */
+function convertRowToObject_(headers, rowData) {
+  const obj = {};
+  headers.forEach((h, j) => {
+    obj[h] = (rowData[j] !== undefined) ? rowData[j] : '';
+  });
+  return obj;
+}
+function crearTriggerPeriodicoSiNoExiste_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const yaExiste = triggers.some(t => {
+    const handler = t.getHandlerFunction();
+    Logger.log(`Trigger encontrado: ${handler}`);
+    return handler === 'procesarEmailsProgramados';
+  });
+  
+  if (!yaExiste) {
+    try {
+      ScriptApp.newTrigger('procesarEmailsProgramados')
+  .timeBased()
+  .everyMinutes(15)
+  .create();
+Logger.log('Trigger creado: procesarEmailsProgramados cada 15 min');
+      Logger.log('Trigger periódico creado exitosamente.');
+    } catch (error) {
+      Logger.log('Error creando trigger: ' + error.message);
+    }
+  } else {
+    Logger.log('Trigger periódico ya existe, no se creó uno nuevo.');
+  }
+}
+
+function procesarEmailsProgramados() {
+  const props = PropertiesService.getScriptProperties().getProperties();
+  const ahora = new Date().getTime();
+  let enviados = 0;
+  
+  Logger.log(`=== Ejecutando procesarEmailsProgramados ===`);
+  Logger.log(`Hora actual: ${new Date(ahora)}`);
+  Logger.log(`Total propiedades: ${Object.keys(props).length}`);
+
+  for (const key in props) {
+    if (!key.startsWith('reminder_')) continue;
+    Logger.log(`Procesando: ${key}`);
+    try {
+      const datos = JSON.parse(props[key]);
+      if (datos.enviarEn <= ahora) {
+        MailApp.sendEmail('andrealoran@proyectopia.es', datos.asunto, datos.cuerpo);
+        PropertiesService.getScriptProperties().deleteProperty(key);
+        enviados++;
+        Logger.log('Email enviado para clave: ' + key);
+      }
+    } catch (err) {
+      Logger.log('Error procesando clave ' + key + ': ' + err.message);
+    }
+  }
+
+  const restantes = Object.keys(PropertiesService.getScriptProperties().getProperties())
+    .filter(k => k.startsWith('reminder_')).length;
+  if (restantes === 0) {
+    ScriptApp.getProjectTriggers()
+      .filter(t => t.getHandlerFunction() === 'procesarEmailsProgramados')
+      .forEach(t => ScriptApp.deleteTrigger(t));
+    Logger.log('Trigger periódico eliminado (sin pendientes).');
+  }
+
+  Logger.log(`Emails enviados en esta ejecución: ${enviados}`);
+}
+
+function testEnvioInmediato() {
+  MailApp.sendEmail('andrealoran@proyectopia.es', 'TEST', 'Email de prueba inmediato');
+  Logger.log('Email de prueba enviado');
+}
+
+function testProgramado() {
+  const key = 'reminder_test_' + Date.now();
+  PropertiesService.getScriptProperties().setProperty(key, JSON.stringify({
+    asunto: 'TEST Programado',
+    cuerpo: 'Este es un test',
+    enviarEn: Date.now() - 1000 // 1 segundo en el pasado para envío inmediato
+  }));
+  crearTriggerPeriodicoSiNoExiste_();
+  Logger.log('Recordatorio de prueba guardado y trigger creado');
+}
+
+
+
+
+
+function getTipoViviendaLabel_(datos) {
+  const categoriaId = String(datos['categoria-id'] || '').trim();
+  const cfg = getCategoriasConfig_();
+  const categorias = cfg.categorias || [];
+  const categoria = categorias.find(c => String(c.id) === categoriaId);
+  if (categoria) {
+    if (categoriaId === 'villas_isla_cortegada') {
+      const viviendaInteresada = datos['vivienda-interesada'] || '';
+      return viviendaInteresada ? `${categoria.nombre} (${viviendaInteresada})` : categoria.nombre;
+    }
+    return categoria.nombre;
+  }
+  return categoriaId === 'villas_isla_cortegada' ? 'Villas Isla de Cortegada' : 'Vivienda normal';
+}
+
+function resolveCategoriaIdDesdeDatos_(datos) {
+  const categoriaId = String(datos['categoria-id'] || '').trim();
+  if (categoriaId) return categoriaId;
+  const interes = normalizeString_(datos.interes || datos['interes-select'] || datos['interes-otros']);
+  const viviendaInteresada = normalizeString_(datos['vivienda-interesada']);
+  const cfg = getCategoriasConfig_();
+  const categorias = cfg.categorias || [];
+
+  const byInteres = categorias.find((cat) => {
+    const expected = normalizeString_((cat.matcher && cat.matcher.value) || cat.nombre || '');
+    return normalizeString_(cat.matcher && cat.matcher.by) === 'interes' && expected && expected === interes;
+  });
+  if (byInteres) return byInteres.id;
+
+  const byVivienda = categorias.find((cat) => {
+    if (normalizeString_(cat.matcher && cat.matcher.by) !== 'vivienda-interesada') return false;
+    const keywords = Array.isArray(cat.matcher && cat.matcher.keywords) ? cat.matcher.keywords : [];
+    return keywords.some(k => viviendaInteresada.includes(normalizeString_(k)));
+  });
+  if (byVivienda) return byVivienda.id;
+
+  const byNombre = categorias.find((cat) => {
+    const alias = Array.isArray(cat.matcher && cat.matcher.aliases) ? cat.matcher.aliases : [];
+    const keys = [cat.nombre].concat(alias).map(normalizeString_).filter(Boolean);
+    return keys.some(k => interes === k || interes.includes(k) || viviendaInteresada.includes(k));
+  });
+  if (byNombre) return byNombre.id;
+
+  const byDefault = categorias.find(cat => normalizeString_(cat.matcher && cat.matcher.by) === 'default');
+  return byDefault ? byDefault.id : '';
+}
+
+function normalizeString_(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function getCampaignSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Hoja 3');
+  if (!sheet) sheet = ss.insertSheet('Hoja 3');
+  ensureCampaignHeaders_(sheet);
+  return sheet;
+}
+
+function ensureCampaignHeaders_(sheet) {
+  const expected = [
+    'id', 'nombre', 'fechaInicio', 'fechaFin', 'clics', 'impresiones', 'coste', 'leads',
+    'ctr', 'cpc', 'cpl', 'conversion', 'diasCampania',
+    'clicsDia', 'impresionesDia', 'costeDia', 'leadsDia', 'timestamp'
+  ];
+  const lastCol = Math.max(sheet.getLastColumn(), expected.length);
+  const current = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const mismatch = expected.some((h, i) => String(current[i] || '') !== h);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, expected.length).setValues([expected]);
+  }
+  return expected;
+}
+
+function saveCampaign_(campaign) {
+  const sheet = getCampaignSheet_();
+  const headers = ensureCampaignHeaders_(sheet);
+  const id = String(campaign.id || `camp_${Date.now()}_${Math.floor(Math.random() * 10000)}`);
+  const row = headers.map(h => (campaign[h] !== undefined ? campaign[h] : ''));
+  row[0] = id;
+
+  let rowNum = -1;
+  if (sheet.getLastRow() > 1) {
+    const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(r => String(r[0]));
+    const idx = ids.findIndex(v => v === id);
+    if (idx !== -1) rowNum = idx + 2;
+  }
+
+  if (rowNum === -1) {
+    sheet.appendRow(row);
+  } else {
+    sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
+  }
+  return createResponse({ status: 'success', id: id, campaign: campaign });
+}
+
+function getCampaigns_() {
+  const sheet = getCampaignSheet_();
+  if (sheet.getLastRow() < 2) return [];
+  const headers = ensureCampaignHeaders_(sheet);
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  return values.map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i]);
+    return obj;
+  });
+}

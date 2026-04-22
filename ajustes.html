@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ajustes - Promociones/Categorías</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.1/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.9.1/font/bootstrap-icons.css" rel="stylesheet" />
+  <link rel="stylesheet" href="estilos.css" />
+</head>
+<body>
+  <nav class="navbar navbar-light bg-light" style="position:sticky; top:0; z-index:1200; border-bottom:1px solid #e5e7eb;">
+    <div class="container-fluid d-flex justify-content-between align-items-center">
+      <div>
+        <h1 class="h5 m-0">⚙️ Ajustes de promociones/categorías</h1>
+        <p class="small text-muted m-0">Gestiona formularios y emails desde cada promoción.</p>
+      </div>
+      <button id="btnVolver" class="btn btn-outline-secondary btn-sm" type="button">← Volver</button>
+    </div>
+  </nav>
+
+  <main class="container py-4">
+    <section class="config-view" style="display:block;">
+      <div class="config-header">
+        <div>
+          <h2>Promociones / categorías</h2>
+          <p>Crea, edita, oculta o elimina promociones. Configura formulario y email dentro de cada una.</p>
+        </div>
+        <button id="btnNuevaCategoria" class="btn btn-primary btn-sm" type="button">➕ Nueva promoción/categoría</button>
+      </div>
+
+      <div class="config-grid">
+        <article class="config-card">
+          <h3 class="mb-3">Listado</h3>
+          <div id="categorias-list" class="categorias-list"></div>
+        </article>
+
+        <article class="config-card" id="editor-card" style="display:none;">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h3 id="editor-title" class="m-0">Editar categoría</h3>
+            <button id="btnCancelarEdicion" class="btn btn-outline-secondary btn-sm" type="button">Cancelar</button>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-nombre">Nombre</label>
+            <input id="edit-nombre" type="text" class="form-control form-control-sm" />
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-activa">Estado</label>
+            <select id="edit-activa" class="form-select form-select-sm">
+              <option value="true">Activa</option>
+              <option value="false">Oculta</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-form-tipo">Tipo de formulario</label>
+            <select id="edit-form-tipo" class="form-select form-select-sm">
+              <option value="standard">Formulario estándar</option>
+              <option value="compact">Formulario compacto</option>
+              <option value="custom">Formulario personalizado</option>
+            </select>
+            <small id="edit-form-tipo-desc" class="text-muted mt-1 d-block"></small>
+          </div>
+
+          <div id="edit-custom-fields" style="display:none;" class="mb-3">
+            <p class="small text-muted mb-2">Campos disponibles:</p>
+            <div id="campos-disponibles" class="campos-disponibles"></div>
+          </div>
+
+          <div id="vivienda-opciones-wrap" class="mb-3" style="display:none;">
+            <label class="form-label mb-1" for="vivienda-opcion-input">Opciones de "Vivienda interesada"</label>
+            <div class="d-flex gap-2">
+              <input id="vivienda-opcion-input" type="text" class="form-control form-control-sm" placeholder="Ej: Vivienda 06" />
+              <button id="btn-add-vivienda-opcion" type="button" class="btn btn-outline-primary btn-sm">Añadir</button>
+            </div>
+            <div id="vivienda-opciones-list" class="mt-2 d-flex flex-wrap gap-2"></div>
+            <div class="small text-muted mt-1">Estas opciones se usarán en Crear ficha para esta promoción.</div>
+          </div>
+          <!-- vivienda-opciones-wrap se mueve aquí dinámicamente vía JS si es necesario -->
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-detalle-tipo">Detalle del contacto</label>
+            <select id="edit-detalle-tipo" class="form-select form-select-sm">
+              <option value="standard">Detalle estándar</option>
+              <option value="custom">Detalle personalizado</option>
+            </select>
+            <small id="edit-detalle-tipo-desc" class="text-muted mt-1 d-block"></small>
+          </div>
+
+          <div id="edit-detalle-fields-wrap" style="display:none;" class="mb-3">
+            <p class="small text-muted mb-2">Campos visibles en “Detalles del contacto”:</p>
+            <div id="detalle-campos-disponibles" class="campos-disponibles"></div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-email-asunto">Asunto email</label>
+            <input id="edit-email-asunto" type="text" class="form-control form-control-sm" />
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-email-recordatorio">Email para recordatorios</label>
+            <input id="edit-email-recordatorio" type="email" class="form-control form-control-sm" placeholder="equipo@empresa.com" />
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-email-variable">Variables</label>
+            <select id="edit-email-variable" class="form-select form-select-sm">
+              <option value="">Insertar variable…</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="edit-email-cuerpo">Cuerpo email</label>
+            <div class="email-prefix-readonly">Buenos días/tardes {{nombre}},</div>
+            <div class="email-editor-toolbar mt-2" role="toolbar" aria-label="Formato del cuerpo del email">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-email-cmd="bold" title="Negrita"><i class="bi bi-type-bold"></i></button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-email-cmd="italic" title="Cursiva"><i class="bi bi-type-italic"></i></button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-email-cmd="underline" title="Subrayado"><i class="bi bi-type-underline"></i></button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-email-action="link" title="Insertar enlace"><i class="bi bi-link-45deg"></i></button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-email-action="clear-format" title="Quitar formato"><i class="bi bi-eraser"></i></button>
+            </div>
+            <div
+              id="edit-email-cuerpo"
+              class="email-editor form-control form-control-sm mt-2"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              data-placeholder="Escribe aquí el cuerpo del email…"
+            ></div>
+            <small class="text-muted d-block mt-1">Puedes usar negrita, cursiva y enlaces. El formato se guardará en la plantilla.</small>
+          </div>
+
+          <div class="config-actions">
+            <button id="btnGuardarCategoria" class="btn btn-success btn-sm" type="button">💾 Guardar cambios</button>
+            <span id="status-msg" class="text-muted small"></span>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="categoria-system.js"></script>
+<script src="ajustes.js"></script>
+</body>
+</html>
