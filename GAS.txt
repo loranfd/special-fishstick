@@ -494,8 +494,18 @@ function handleCategoriasAction_(action, payload, method) {
     }
 
     if (actionName === 'saveCampaign') {
-      const campaign = payload.campaign || payload;
+      const campaign = parseCampaignPayload_(payload.campaign || payload);
       return saveCampaign_(campaign);
+    }
+
+    if (actionName === 'updateCampaign') {
+      const campaign = parseCampaignPayload_(payload.campaign || payload);
+      return updateCampaign_(campaign);
+    }
+
+    if (actionName === 'deleteCampaign') {
+      const id = String(payload.id || '').trim();
+      return deleteCampaign_(id);
     }
 
     if (actionName === 'getCampaigns') {
@@ -1095,6 +1105,48 @@ function saveCampaign_(campaign) {
     sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
   }
   return createResponse({ status: 'success', id: id, campaign: campaign });
+}
+
+function parseCampaignPayload_(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      return {};
+    }
+  }
+  return raw;
+}
+
+function updateCampaign_(campaign) {
+  const sheet = getCampaignSheet_();
+  const headers = ensureCampaignHeaders_(sheet);
+  const id = String((campaign && campaign.id) || '').trim();
+  if (!id) return createResponse({ status: 'error', message: 'ID de campaña obligatorio' });
+  if (sheet.getLastRow() < 2) return createResponse({ status: 'error', message: 'No hay campañas guardadas' });
+
+  const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(r => String(r[0]));
+  const idx = ids.findIndex(v => v === id);
+  if (idx === -1) return createResponse({ status: 'error', message: 'Campaña no encontrada' });
+
+  const rowNum = idx + 2;
+  const row = headers.map(h => (campaign[h] !== undefined ? campaign[h] : ''));
+  row[0] = id;
+  sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
+  return createResponse({ status: 'success', id: id, campaign: campaign });
+}
+
+function deleteCampaign_(id) {
+  const campaignId = String(id || '').trim();
+  if (!campaignId) return createResponse({ status: 'error', message: 'ID de campaña obligatorio' });
+  const sheet = getCampaignSheet_();
+  if (sheet.getLastRow() < 2) return createResponse({ status: 'error', message: 'No hay campañas guardadas' });
+  const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(r => String(r[0]));
+  const idx = ids.findIndex(v => v === campaignId);
+  if (idx === -1) return createResponse({ status: 'error', message: 'Campaña no encontrada' });
+  sheet.deleteRow(idx + 2);
+  return createResponse({ status: 'success', id: campaignId });
 }
 
 function getCampaigns_() {

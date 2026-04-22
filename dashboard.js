@@ -896,6 +896,56 @@ function normalizarCampaniaRow(row) {
   };
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function calcularMetricasCampania(base) {
+  const fechaInicio = String(base.fechaInicio || '').trim();
+  const fechaFin = String(base.fechaFin || '').trim();
+  const clics = Number(base.clics || 0);
+  const impresiones = Number(base.impresiones || 0);
+  const coste = Number(base.coste || 0);
+  const leads = Number(base.leads || 0);
+  const inicio = new Date(`${fechaInicio}T00:00:00`);
+  const fin = new Date(`${fechaFin}T00:00:00`);
+  const invalidRange = isNaN(inicio) || isNaN(fin) || inicio >= fin;
+  const unDia = 1000 * 60 * 60 * 24;
+  const diasCampania = invalidRange ? 0 : (Math.floor((fin - inicio) / unDia) + 1);
+
+  return {
+    ctr: impresiones > 0 ? (clics / impresiones) * 100 : 0,
+    cpc: clics > 0 ? coste / clics : 0,
+    cpl: leads > 0 ? coste / leads : 0,
+    conversion: clics > 0 ? Math.min((leads / clics) * 100, 100) : 0,
+    diasCampania,
+    clicsDia: diasCampania > 0 ? clics / diasCampania : 0,
+    impresionesDia: diasCampania > 0 ? impresiones / diasCampania : 0,
+    costeDia: diasCampania > 0 ? coste / diasCampania : 0,
+    leadsDia: diasCampania > 0 ? leads / diasCampania : 0
+  };
+}
+
+function obtenerCampaniaPorId(id) {
+  const key = String(id || '');
+  return campañasGuardadas.find(c => String(c.id) === key) || null;
+}
+
+function validarBaseCampania(data) {
+  const invalidBase = !data.nombre || !data.fechaInicio || !data.fechaFin ||
+    !Number.isFinite(data.clics) || !Number.isFinite(data.impresiones) || !Number.isFinite(data.coste) || !Number.isFinite(data.leads);
+  const invalidNums = [data.clics, data.impresiones, data.coste, data.leads].some(v => v < 0);
+  const dInicio = new Date(`${data.fechaInicio}T00:00:00`);
+  const dFin = new Date(`${data.fechaFin}T00:00:00`);
+  const invalidDates = isNaN(dInicio) || isNaN(dFin) || dInicio >= dFin;
+  return !(invalidBase || invalidNums || invalidDates);
+}
+
 function renderCampaniasEnComparacion() {
   const tbody = document.querySelector('#tabla-comparacion tbody');
   if (!tbody) return;
@@ -912,8 +962,8 @@ function renderCampaniasEnComparacion() {
   });
 
   tbody.innerHTML = rows.map(c => `
-    <tr>
-      <td>${c.nombre || 'Campaña'}</td>
+    <tr data-campaign-id="${escapeHtml(c.id)}">
+      <td>${escapeHtml(c.nombre || 'Campaña')}</td>
       <td>${formatDateEs(c.fechaInicio)}</td>
       <td>${formatDateEs(c.fechaFin)}</td>
       <td>${Number.isFinite(c.clics) ? c.clics.toFixed(0) : ''}</td>
@@ -921,6 +971,13 @@ function renderCampaniasEnComparacion() {
       <td>${Number.isFinite(c.coste) ? `${c.coste.toFixed(2)} €` : ''}</td>
       <td>${Number.isFinite(c.leads) ? c.leads.toFixed(0) : ''}</td>
       <td>${Number.isFinite(c.cpl) ? `${c.cpl.toFixed(2)} €` : ''}</td>
+      <td class="campaign-actions-cell">
+        <button type="button" class="campaign-settings-btn" data-action="campaign-open-menu" data-id="${escapeHtml(c.id)}" title="Editar o eliminar">⋮</button>
+        <div class="campaign-settings-menu" data-menu-for="${escapeHtml(c.id)}" hidden>
+          <button type="button" data-action="campaign-edit" data-id="${escapeHtml(c.id)}">Editar</button>
+          <button type="button" data-action="campaign-delete" data-id="${escapeHtml(c.id)}">Eliminar campaña</button>
+        </div>
+      </td>
     </tr>
   `).join('');
 
@@ -934,6 +991,154 @@ function renderCampaniasEnComparacion() {
       resumen.textContent = 'Aún no hay campañas guardadas en Hoja 3.';
     }
   }
+}
+
+function renderCampaniaEnModoEdicion(id) {
+  const row = document.querySelector(`#tabla-comparacion tbody tr[data-campaign-id="${CSS.escape(String(id))}"]`);
+  const campaña = obtenerCampaniaPorId(id);
+  if (!row || !campaña) return;
+  const c = campaña;
+  row.classList.add('editing');
+  row.innerHTML = `
+    <td><input type="text" data-edit="nombre" value="${escapeHtml(c.nombre)}"></td>
+    <td><input type="date" data-edit="fechaInicio" value="${escapeHtml(c.fechaInicio)}"></td>
+    <td><input type="date" data-edit="fechaFin" value="${escapeHtml(c.fechaFin)}"></td>
+    <td><input type="number" min="0" step="1" data-edit="clics" value="${Number.isFinite(c.clics) ? c.clics : 0}"></td>
+    <td><input type="number" min="0" step="1" data-edit="impresiones" value="${Number.isFinite(c.impresiones) ? c.impresiones : 0}"></td>
+    <td><input type="number" min="0" step="0.01" data-edit="coste" value="${Number.isFinite(c.coste) ? c.coste : 0}"></td>
+    <td><input type="number" min="0" step="1" data-edit="leads" value="${Number.isFinite(c.leads) ? c.leads : 0}"></td>
+    <td>${Number.isFinite(c.cpl) ? `${c.cpl.toFixed(2)} €` : ''}</td>
+    <td class="campaign-actions-cell editing-actions">
+      <button type="button" class="campaign-inline-btn" data-action="campaign-save" data-id="${escapeHtml(c.id)}">Guardar</button>
+      <button type="button" class="campaign-inline-btn secondary" data-action="campaign-cancel" data-id="${escapeHtml(c.id)}">Cancelar</button>
+    </td>
+  `;
+}
+
+function cerrarMenusCampanias(exceptId) {
+  document.querySelectorAll('.campaign-settings-menu').forEach(menu => {
+    if (exceptId && menu.dataset.menuFor === String(exceptId)) return;
+    menu.hidden = true;
+  });
+}
+
+function obtenerPayloadCampaniaDesdeFila(row, id) {
+  const getInput = (field) => row.querySelector(`[data-edit="${field}"]`);
+  const base = {
+    id: String(id || ''),
+    nombre: String(getInput('nombre')?.value || '').trim(),
+    fechaInicio: String(getInput('fechaInicio')?.value || '').trim(),
+    fechaFin: String(getInput('fechaFin')?.value || '').trim(),
+    clics: Number(getInput('clics')?.value || ''),
+    impresiones: Number(getInput('impresiones')?.value || ''),
+    coste: Number(getInput('coste')?.value || ''),
+    leads: Number(getInput('leads')?.value || ''),
+    timestamp: new Date().toISOString()
+  };
+  return { ...base, ...calcularMetricasCampania(base) };
+}
+
+async function actualizarCampania(campaign) {
+  const body = new URLSearchParams();
+  body.set('action', 'updateCampaign');
+  body.set('campaign', JSON.stringify(campaign));
+  const response = await fetch(urlApi, { method: 'POST', body });
+  return response.json();
+}
+
+async function eliminarCampania(id) {
+  const body = new URLSearchParams();
+  body.set('action', 'deleteCampaign');
+  body.set('id', String(id || ''));
+  const response = await fetch(urlApi, { method: 'POST', body });
+  return response.json();
+}
+
+function configurarEventosComparacionCampanias() {
+  const tabla = document.getElementById('tabla-comparacion');
+  if (!tabla) return;
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.campaign-actions-cell')) {
+      cerrarMenusCampanias();
+    }
+  });
+
+  tabla.addEventListener('click', async (event) => {
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    const id = target.dataset.id;
+    if (!id) return;
+
+    if (action === 'campaign-open-menu') {
+      const menu = tabla.querySelector(`.campaign-settings-menu[data-menu-for="${CSS.escape(String(id))}"]`);
+      if (!menu) return;
+      const willOpen = menu.hidden;
+      cerrarMenusCampanias(id);
+      menu.hidden = !willOpen;
+      return;
+    }
+
+    if (action === 'campaign-edit') {
+      cerrarMenusCampanias();
+      renderCampaniaEnModoEdicion(id);
+      return;
+    }
+
+    if (action === 'campaign-cancel') {
+      renderCampaniasEnComparacion();
+      return;
+    }
+
+    if (action === 'campaign-save') {
+      const row = target.closest('tr');
+      if (!row) return;
+      const payload = obtenerPayloadCampaniaDesdeFila(row, id);
+      const msg = document.getElementById('guardar-campania-msg');
+      if (!validarBaseCampania(payload)) {
+        if (msg) msg.textContent = 'Revisa los datos de edición: nombre, fechas válidas y valores numéricos ≥ 0.';
+        return;
+      }
+      target.disabled = true;
+      try {
+        const result = await actualizarCampania(payload);
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'No se pudo actualizar la campaña');
+        }
+        campañasGuardadas = campañasGuardadas.map(c => String(c.id) === String(id) ? normalizarCampaniaRow(payload) : c);
+        if (msg) msg.textContent = 'Campaña actualizada correctamente.';
+        renderCampaniasEnComparacion();
+      } catch (error) {
+        console.error('Error al actualizar campaña:', error);
+        if (msg) msg.textContent = 'Error al actualizar campaña.';
+      } finally {
+        target.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'campaign-delete') {
+      cerrarMenusCampanias();
+      if (!window.confirm('¿Seguro que quieres eliminar esta campaña? Esta acción no se puede deshacer.')) return;
+      const msg = document.getElementById('guardar-campania-msg');
+      target.disabled = true;
+      try {
+        const result = await eliminarCampania(id);
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'No se pudo eliminar la campaña');
+        }
+        campañasGuardadas = campañasGuardadas.filter(c => String(c.id) !== String(id));
+        if (msg) msg.textContent = 'Campaña eliminada correctamente.';
+        renderCampaniasEnComparacion();
+      } catch (error) {
+        console.error('Error al eliminar campaña:', error);
+        if (msg) msg.textContent = 'Error al eliminar campaña.';
+      } finally {
+        target.disabled = false;
+      }
+    }
+  });
 }
 
 async function cargarCampaniasGuardadas() {
@@ -1461,6 +1666,7 @@ function configurarNotasExport() {
 document.addEventListener('DOMContentLoaded', () => {
   configurarFiltros();
   configurarEmbudo();
+  configurarEventosComparacionCampanias();
   configurarNotasExport();
   cargarDatos();
 });
