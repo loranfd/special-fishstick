@@ -431,9 +431,17 @@ body {
 }
 
 /* Ajuste visual solicitado: eliminar línea inferior morada en bloque de anuncio */
+#detalle-anuncio {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+#detalle-anuncio > summary {
+  border-bottom: 0 !important;
+}
 #detalle-anuncio .metric-body {
   border-bottom: 0;
   box-shadow: none;
+  background: #fff;
 }
 
 .embudo-value.unavailable {

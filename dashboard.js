@@ -913,10 +913,11 @@ function normalizarFechaISO(value) {
 }
 
 function normalizarCampaniaRow(row) {
+  const promoRaw = String(row.promocion || '').trim();
   return {
     id: String(row.id || ''),
     nombre: String(row.nombre || row.nombreCampania || ''),
-    promocionId: String(row.promocionId || ''),
+    promocionId: String(row.promocionId || (promoRaw && promoRaw !== 'all' ? promoRaw : '')),
     promocionNombre: String(row.promocionNombre || row.promocion || ''),
     fechaInicio: normalizarFechaISO(row.fechaInicio),
     fechaFin: normalizarFechaISO(row.fechaFin),
@@ -1005,16 +1006,39 @@ function cargarCampaniaEnResumen(campaignId) {
   const selectCat = document.getElementById('embudo-categoria');
   if (selectCat) {
     const options = Array.from(selectCat.options);
+    const normalizeLabel = (v) => normalizar(String(v || '').replace(/[^a-z0-9áéíóúüñ\s-]/gi, ' ').replace(/\s+/g, ' '));
+
+    let matched = false;
     if (campaña.promocionId) {
-      const byId = options.find(o => o.value === campaña.promocionId);
+      const byId = options.find(o => String(o.value) === String(campaña.promocionId));
       if (byId) {
         selectCat.value = byId.value;
+        matched = true;
       }
     }
-    if (campaña.promocionNombre && selectCat.value === 'all') {
-      const nombreTarget = normalizar(campaña.promocionNombre);
-      const byName = options.find(o => normalizar(o.textContent) === nombreTarget);
-      if (byName) selectCat.value = byName.value;
+
+    if (!matched && campaña.promocionNombre) {
+      const nombreTarget = normalizeLabel(campaña.promocionNombre);
+      const byName = options.find(o => {
+        const n = normalizeLabel(o.textContent);
+        return n === nombreTarget || n.includes(nombreTarget) || nombreTarget.includes(n);
+      });
+      if (byName) {
+        selectCat.value = byName.value;
+        matched = true;
+      }
+    }
+
+    if (!matched && campaña.promocionId) {
+      const idTarget = normalizeLabel(campaña.promocionId);
+      const byLoose = options.find(o => {
+        const nVal = normalizeLabel(o.value);
+        const nTxt = normalizeLabel(o.textContent);
+        return nVal === idTarget || nTxt === idTarget || nTxt.includes(idTarget) || idTarget.includes(nTxt);
+      });
+      if (byLoose) {
+        selectCat.value = byLoose.value;
+      }
     }
   }
 
