@@ -234,7 +234,7 @@ if (fechaNotif) {
       }
 
       Logger.log(`Enviando email inmediato a andrealoran@proyectopia.es - Asunto: ${asunto}`);
-      MailApp.sendEmail('andrealoran@proyectopia.es', asunto, cuerpo);
+      sendEmailFormateado_('andrealoran@proyectopia.es', asunto, cuerpo);
       return createResponse({ status: 'success', message: 'Email enviado' });
     }
     
@@ -969,7 +969,7 @@ function procesarEmailsProgramados() {
     try {
       const datos = JSON.parse(props[key]);
       if (datos.enviarEn <= ahora) {
-        MailApp.sendEmail('andrealoran@proyectopia.es', datos.asunto, datos.cuerpo);
+        sendEmailFormateado_('andrealoran@proyectopia.es', datos.asunto, datos.cuerpo);
         PropertiesService.getScriptProperties().deleteProperty(key);
         enviados++;
         Logger.log('Email enviado para clave: ' + key);
@@ -992,7 +992,7 @@ function procesarEmailsProgramados() {
 }
 
 function testEnvioInmediato() {
-  MailApp.sendEmail('andrealoran@proyectopia.es', 'TEST', 'Email de prueba inmediato');
+  sendEmailFormateado_('andrealoran@proyectopia.es', 'TEST', 'Email de prueba inmediato');
   Logger.log('Email de prueba enviado');
 }
 
@@ -1005,6 +1005,48 @@ function testProgramado() {
   }));
   crearTriggerPeriodicoSiNoExiste_();
   Logger.log('Recordatorio de prueba guardado y trigger creado');
+}
+
+function sendEmailFormateado_(to, asunto, contenido) {
+  const email = prepararContenidoEmail_(contenido);
+  MailApp.sendEmail({
+    to: String(to || '').trim(),
+    subject: String(asunto || '').trim(),
+    body: email.textBody,
+    htmlBody: email.htmlBody
+  });
+}
+
+function prepararContenidoEmail_(contenido) {
+  const raw = String(contenido || '').replace(/\r\n?/g, '\n');
+
+  // 1) Markdown básico -> HTML
+  let html = raw
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  // 2) Saltos de línea
+  html = html.replace(/\n/g, '<br>');
+
+  // 3) Saneado mínimo para evitar scripts/handlers inseguros
+  html = html
+    .replace(/<\s*script[^>]*>[\s\S]*?<\s*\/\s*script>/gi, '')
+    .replace(/<\s*style[^>]*>[\s\S]*?<\s*\/\s*style>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/href\s*=\s*"\s*javascript:[^"]*"/gi, 'href="#"')
+    .replace(/href\s*=\s*'\s*javascript:[^']*'/gi, "href='#'");
+
+  const htmlBody = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#111;">${html}</div>`;
+  const textBody = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return { htmlBody, textBody };
 }
 
 
