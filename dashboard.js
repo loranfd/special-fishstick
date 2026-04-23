@@ -781,6 +781,13 @@ function configurarEmbudo() {
     btnGuardarCampania.addEventListener('click', guardarCampaña);
   }
 
+  const btnResetResumen = document.getElementById('btn-reset-resumen');
+  if (btnResetResumen) {
+    btnResetResumen.addEventListener('click', resetearResumenCampania);
+  }
+
+  configurarSincroniaAnuncioTrafico();
+
   const embudoInputs = [
     'embudo-categoria',
     'input-fecha-inicio',
@@ -798,6 +805,24 @@ function configurarEmbudo() {
   });
 
   calcularEmbudo();
+}
+
+function configurarSincroniaAnuncioTrafico() {
+  const detalleAnuncio = document.getElementById('detalle-anuncio');
+  const detalleTrafico = document.getElementById('detalle-trafico');
+  if (!detalleAnuncio || !detalleTrafico) return;
+
+  let syncing = false;
+  const sync = (source, target) => {
+    if (syncing) return;
+    syncing = true;
+    if (source.hasAttribute('open')) target.setAttribute('open', 'open');
+    else target.removeAttribute('open');
+    syncing = false;
+  };
+
+  detalleAnuncio.addEventListener('toggle', () => sync(detalleAnuncio, detalleTrafico));
+  detalleTrafico.addEventListener('toggle', () => sync(detalleTrafico, detalleAnuncio));
 }
 
 function safeCalculate(fn, dependencies) {
@@ -873,12 +898,29 @@ function getDailyLeads(fechaInicio, fechaFin, contactosEnRango) {
   return days;
 }
 
+function normalizarFechaISO(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (match) return match[1];
+  const d = new Date(raw);
+  if (isNaN(d)) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function normalizarCampaniaRow(row) {
+  const promoRaw = String(row.promocion || '').trim();
   return {
     id: String(row.id || ''),
     nombre: String(row.nombre || row.nombreCampania || ''),
-    fechaInicio: String(row.fechaInicio || ''),
-    fechaFin: String(row.fechaFin || ''),
+    promocionId: String(row.promocionId || (promoRaw && promoRaw !== 'all' ? promoRaw : '')),
+    promocionNombre: String(row.promocionNombre || row.promocion || ''),
+    fechaInicio: normalizarFechaISO(row.fechaInicio),
+    fechaFin: normalizarFechaISO(row.fechaFin),
     clics: Number(row.clics || 0),
     impresiones: Number(row.impresiones || 0),
     coste: Number(row.coste || 0),
@@ -894,6 +936,271 @@ function normalizarCampaniaRow(row) {
     leadsDia: Number(row.leadsDia || 0),
     timestamp: String(row.timestamp || '')
   };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function calcularMetricasCampania(base) {
+  const fechaInicio = String(base.fechaInicio || '').trim();
+  const fechaFin = String(base.fechaFin || '').trim();
+  const clics = Number(base.clics || 0);
+  const impresiones = Number(base.impresiones || 0);
+  const coste = Number(base.coste || 0);
+  const leads = Number(base.leads || 0);
+  const inicio = new Date(`${fechaInicio}T00:00:00`);
+  const fin = new Date(`${fechaFin}T00:00:00`);
+  const invalidRange = isNaN(inicio) || isNaN(fin) || inicio >= fin;
+  const unDia = 1000 * 60 * 60 * 24;
+  const diasCampania = invalidRange ? 0 : (Math.floor((fin - inicio) / unDia) + 1);
+
+  return {
+    ctr: impresiones > 0 ? (clics / impresiones) * 100 : 0,
+    cpc: clics > 0 ? coste / clics : 0,
+    cpl: leads > 0 ? coste / leads : 0,
+    conversion: clics > 0 ? Math.min((leads / clics) * 100, 100) : 0,
+    diasCampania,
+    clicsDia: diasCampania > 0 ? clics / diasCampania : 0,
+    impresionesDia: diasCampania > 0 ? impresiones / diasCampania : 0,
+    costeDia: diasCampania > 0 ? coste / diasCampania : 0,
+    leadsDia: diasCampania > 0 ? leads / diasCampania : 0
+  };
+}
+
+function actualizarDiagnosticoEmbudo({ ctrCalc, conv, cpc, cpl, clicsPorFormulario }) {
+  const kpiMessage = {
+    ctr: ctrCalc === null ? '' : (ctrCalc < 1 ? '🔴 El anuncio no está captando atención diaria' : (ctrCalc < 2 ? '🟠 Atención mejorable, optimizar creatividades' : (ctrCalc <= 4 ? '🟢 CTR correcto y estable' : '🔥 Anuncio muy atractivo diariamente'))),
+    conv: conv === null ? '' : (conv < 1 ? '🔴 La landing no convierte de forma consistente' : (conv < 2 ? '🟠 Conversión baja diaria, revisar formulario o mensaje' : (conv <= 5 ? '🟢 Conversión correcta y estable' : '🔥 Landing muy optimizada en el tiempo'))),
+    cpc: cpc === null ? '' : (cpc < 0.10 ? '🔥 Tráfico extremadamente barato sostenido' : (cpc < 0.30 ? '🟢 Clic eficiente de forma estable' : (cpc <= 0.80 ? '🟠 CPC medio, optimización posible' : '🔴 Clic caro sostenido en el tiempo'))),
+    cpl: cpl === null ? '' : (cpl < 15 ? '🔥 Captación muy eficiente y estable' : (cpl < 35 ? '🟢 Coste controlado diario' : (cpl < 60 ? '🟠 Lead caro de forma sostenida' : '🔴 Campaña no rentable en el tiempo'))),
+    calidad: clicsPorFormulario === null ? '' : (clicsPorFormulario < 20 ? '🔥 Tráfico muy cualificado de forma constante' : (clicsPorFormulario <= 40 ? '🟢 Buen tráfico diario' : (clicsPorFormulario <= 100 ? '🟠 Calidad media estable' : '🔴 Tráfico poco cualificado sostenido')))
+  };
+
+  let combinado = '';
+  if (ctrCalc !== null && conv !== null) {
+    if (ctrCalc < 2 && conv < 2) combinado = '🔴 Problema estructural diario en embudo';
+    else if (ctrCalc >= 2 && conv < 2) combinado = '🔴 Anuncio funciona, landing falla';
+    else if (ctrCalc < 2 && conv >= 2) combinado = '🔴 Buen producto pero anuncio débil';
+    else if (ctrCalc > 4 && conv > 5) combinado = '🔥 Campaña altamente optimizada diaria';
+    else combinado = '🟢 Embudo equilibrado en el tiempo';
+  }
+
+  document.getElementById('diag-ctr').textContent = kpiMessage.ctr;
+  document.getElementById('diag-conv').textContent = kpiMessage.conv;
+  document.getElementById('diag-cpc').textContent = kpiMessage.cpc;
+  document.getElementById('diag-cpl').textContent = kpiMessage.cpl;
+  document.getElementById('diag-calidad').textContent = kpiMessage.calidad;
+  document.getElementById('diag-combinado').textContent = combinado;
+}
+
+function cargarCampaniaEnResumen(campaignId) {
+  const campaña = obtenerCampaniaPorId(campaignId);
+  if (!campaña) return;
+
+  const selectCat = document.getElementById('embudo-categoria');
+  if (selectCat) {
+    Array.from(selectCat.options).forEach((opt) => {
+      if (opt.dataset.dynamic === '1') opt.remove();
+    });
+    const options = Array.from(selectCat.options);
+    const normalizeLabel = (v) => normalizar(String(v || '').replace(/[^a-z0-9áéíóúüñ\s-]/gi, ' ').replace(/\s+/g, ' '));
+
+    // Siempre reiniciar a "Todo" antes de intentar asignar la categoría de la campaña
+    selectCat.value = 'all';
+    let matched = false;
+    if (campaña.promocionId) {
+      const byId = options.find(o => String(o.value) === String(campaña.promocionId));
+      if (byId) {
+        selectCat.value = byId.value;
+        matched = true;
+      }
+    }
+
+    if (!matched && campaña.promocionNombre) {
+      const nombreTarget = normalizeLabel(campaña.promocionNombre);
+      const byName = options.find(o => {
+        const n = normalizeLabel(o.textContent);
+        return n === nombreTarget || n.includes(nombreTarget) || nombreTarget.includes(n);
+      });
+      if (byName) {
+        selectCat.value = byName.value;
+        matched = true;
+      }
+    }
+
+    if (!matched && campaña.promocionId) {
+      const idTarget = normalizeLabel(campaña.promocionId);
+      const byLoose = options.find(o => {
+        const nVal = normalizeLabel(o.value);
+        const nTxt = normalizeLabel(o.textContent);
+        return nVal === idTarget || nTxt === idTarget || nTxt.includes(idTarget) || idTarget.includes(nTxt);
+      });
+      if (byLoose) {
+        selectCat.value = byLoose.value;
+        matched = true;
+      }
+    }
+
+    // Fallback extra: intentar deducir por nombre de campaña
+    if (!matched && campaña.nombre) {
+      const campaignName = normalizeLabel(campaña.nombre);
+      const byCampaignName = options.find(o => {
+        const txt = normalizeLabel(o.textContent);
+        return txt && txt !== 'todo' && (campaignName.includes(txt) || txt.includes(campaignName));
+      });
+      if (byCampaignName) {
+        selectCat.value = byCampaignName.value;
+        matched = true;
+      }
+    }
+
+    // Fallback por inferencia desde datos reales (campañas antiguas sin metadata de promoción)
+    if (!matched) {
+      const inferredId = inferirPromocionCampania(campaña);
+      if (inferredId) {
+        const byInfer = options.find(o => String(o.value) === String(inferredId));
+        if (byInfer) {
+          selectCat.value = byInfer.value;
+          matched = true;
+        }
+      }
+    }
+
+    // Si existe metadata de promoción pero no está en las opciones, añadirla para mostrarla correctamente
+    if (!matched) {
+      const fallbackLabel = String(campaña.promocionNombre || campaña.promocionId || '').trim();
+      if (fallbackLabel) {
+        const tempValue = `legacy_${Date.now()}`;
+        const opt = document.createElement('option');
+        opt.value = tempValue;
+        opt.textContent = fallbackLabel;
+        opt.dataset.dynamic = '1';
+        selectCat.appendChild(opt);
+        selectCat.value = tempValue;
+      }
+    }
+  }
+
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+
+  setVal('camp-nombre', campaña.nombre || '');
+  setVal('input-fecha-inicio', campaña.fechaInicio || '');
+  setVal('input-fecha-fin', campaña.fechaFin || '');
+  setVal('input-clics', Number.isFinite(campaña.clics) ? campaña.clics : '');
+  setVal('input-impresiones', Number.isFinite(campaña.impresiones) ? campaña.impresiones : '');
+  setVal('input-coste', Number.isFinite(campaña.coste) ? campaña.coste : '');
+  setVal('input-formularios', Number.isFinite(campaña.leads) ? campaña.leads : 0);
+
+  setMetricValue('res-cpc', campaña.cpc);
+  setMetricValue('res-conv', campaña.conversion, '%');
+  setMetricValue('res-cpl', campaña.cpl, '€');
+  setMetricValue('res-ctr', campaña.ctr, '%');
+  setMetricValue('res-coste-lead-click', campaña.cpl, '€');
+  setMetricValue('res-dia-clics', campaña.clicsDia);
+  setMetricValue('res-dia-impresiones', campaña.impresionesDia);
+  setMetricValue('res-dia-coste', campaña.costeDia, '€');
+  setMetricValue('res-dia-leads', campaña.leadsDia);
+
+  const resumenNombre = document.getElementById('resumen-campania-nombre');
+  if (resumenNombre) {
+    resumenNombre.textContent = campaña.nombre ? `· ${campaña.nombre}` : '';
+  }
+
+  const clicsPorFormulario = campaña.leads > 0 ? campaña.clics / campaña.leads : null;
+  actualizarDiagnosticoEmbudo({
+    ctrCalc: Number.isFinite(campaña.ctr) ? campaña.ctr : null,
+    conv: Number.isFinite(campaña.conversion) ? campaña.conversion : null,
+    cpc: Number.isFinite(campaña.cpc) ? campaña.cpc : null,
+    cpl: Number.isFinite(campaña.cpl) ? campaña.cpl : null,
+    clicsPorFormulario: Number.isFinite(clicsPorFormulario) ? clicsPorFormulario : null
+  });
+
+  abrirBloquesAnalisisCampania();
+  document.getElementById('detalle-resumen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function inferirPromocionCampania(campaña) {
+  const data = datosGlobales?.dataCompleta;
+  const categorias = appConfig?.categorias || [];
+  if (!Array.isArray(data) || !campaña?.fechaInicio || !campaña?.fechaFin || categorias.length === 0) return '';
+
+  const inicio = new Date(`${campaña.fechaInicio}T00:00:00`);
+  const fin = new Date(`${campaña.fechaFin}T23:59:59`);
+  if (isNaN(inicio) || isNaN(fin) || fin < inicio) return '';
+
+  const counter = new Map();
+  categorias.forEach(cat => counter.set(String(cat.id), 0));
+
+  data.forEach((item) => {
+    const rawFecha = String(item['Fecha'] || '').trim();
+    if (!rawFecha) return;
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(rawFecha) ? new Date(`${rawFecha}T00:00:00`) : new Date(rawFecha);
+    if (isNaN(fecha) || fecha < inicio || fecha > fin) return;
+    const categoria = CategoriaSystem.resolveCategoria(appConfig, item);
+    const id = String(categoria?.id || '');
+    if (!id || !counter.has(id)) return;
+    counter.set(id, (counter.get(id) || 0) + 1);
+  });
+
+  let bestId = '';
+  let bestCount = 0;
+  counter.forEach((count, id) => {
+    if (count > bestCount) {
+      bestCount = count;
+      bestId = id;
+    }
+  });
+  return bestId;
+}
+
+function abrirBloquesAnalisisCampania() {
+  const abrirIds = ['detalle-resumen', 'detalle-anuncio', 'detalle-trafico', 'detalle-rendimiento', 'detalle-diagnostico'];
+  abrirIds.forEach((id) => document.getElementById(id)?.setAttribute('open', 'open'));
+  document.getElementById('detalle-guardar')?.removeAttribute('open');
+}
+
+function resetearResumenCampania() {
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+
+  setVal('camp-nombre', '');
+  setVal('input-fecha-inicio', '');
+  setVal('input-fecha-fin', '');
+  setVal('input-clics', 0);
+  setVal('input-impresiones', 0);
+  setVal('input-coste', 0);
+  setVal('input-formularios', 0);
+  const categoria = document.getElementById('embudo-categoria');
+  if (categoria) categoria.value = 'all';
+  const resumenNombre = document.getElementById('resumen-campania-nombre');
+  if (resumenNombre) resumenNombre.textContent = '';
+  calcularEmbudo();
+}
+
+function obtenerCampaniaPorId(id) {
+  const key = String(id || '');
+  return campañasGuardadas.find(c => String(c.id) === key) || null;
+}
+
+function validarBaseCampania(data) {
+  const invalidBase = !data.nombre || !data.fechaInicio || !data.fechaFin ||
+    !Number.isFinite(data.clics) || !Number.isFinite(data.impresiones) || !Number.isFinite(data.coste) || !Number.isFinite(data.leads);
+  const invalidNums = [data.clics, data.impresiones, data.coste, data.leads].some(v => v < 0);
+  const dInicio = new Date(`${data.fechaInicio}T00:00:00`);
+  const dFin = new Date(`${data.fechaFin}T00:00:00`);
+  const invalidDates = isNaN(dInicio) || isNaN(dFin) || dInicio >= dFin;
+  return !(invalidBase || invalidNums || invalidDates);
 }
 
 function renderCampaniasEnComparacion() {
@@ -912,8 +1219,8 @@ function renderCampaniasEnComparacion() {
   });
 
   tbody.innerHTML = rows.map(c => `
-    <tr>
-      <td>${c.nombre || 'Campaña'}</td>
+    <tr data-campaign-id="${escapeHtml(c.id)}">
+      <td>${escapeHtml(c.nombre || 'Campaña')}</td>
       <td>${formatDateEs(c.fechaInicio)}</td>
       <td>${formatDateEs(c.fechaFin)}</td>
       <td>${Number.isFinite(c.clics) ? c.clics.toFixed(0) : ''}</td>
@@ -921,6 +1228,13 @@ function renderCampaniasEnComparacion() {
       <td>${Number.isFinite(c.coste) ? `${c.coste.toFixed(2)} €` : ''}</td>
       <td>${Number.isFinite(c.leads) ? c.leads.toFixed(0) : ''}</td>
       <td>${Number.isFinite(c.cpl) ? `${c.cpl.toFixed(2)} €` : ''}</td>
+      <td class="campaign-actions-cell">
+        <button type="button" class="campaign-settings-btn" data-action="campaign-open-menu" data-id="${escapeHtml(c.id)}" title="Editar o eliminar">⋮</button>
+        <div class="campaign-settings-menu" data-menu-for="${escapeHtml(c.id)}" hidden>
+          <button type="button" data-action="campaign-edit" data-id="${escapeHtml(c.id)}">Editar</button>
+          <button type="button" data-action="campaign-delete" data-id="${escapeHtml(c.id)}">Eliminar campaña</button>
+        </div>
+      </td>
     </tr>
   `).join('');
 
@@ -934,6 +1248,163 @@ function renderCampaniasEnComparacion() {
       resumen.textContent = 'Aún no hay campañas guardadas en Hoja 3.';
     }
   }
+}
+
+function renderCampaniaEnModoEdicion(id) {
+  const row = document.querySelector(`#tabla-comparacion tbody tr[data-campaign-id="${CSS.escape(String(id))}"]`);
+  const campaña = obtenerCampaniaPorId(id);
+  if (!row || !campaña) return;
+  const c = campaña;
+  row.classList.add('editing');
+  row.innerHTML = `
+    <td><input type="text" data-edit="nombre" value="${escapeHtml(c.nombre)}"></td>
+    <td><input type="date" data-edit="fechaInicio" value="${escapeHtml(c.fechaInicio)}"></td>
+    <td><input type="date" data-edit="fechaFin" value="${escapeHtml(c.fechaFin)}"></td>
+    <td><input type="number" min="0" step="1" data-edit="clics" value="${Number.isFinite(c.clics) ? c.clics : 0}"></td>
+    <td><input type="number" min="0" step="1" data-edit="impresiones" value="${Number.isFinite(c.impresiones) ? c.impresiones : 0}"></td>
+    <td><input type="number" min="0" step="0.01" data-edit="coste" value="${Number.isFinite(c.coste) ? c.coste : 0}"></td>
+    <td><input type="number" min="0" step="1" data-edit="leads" value="${Number.isFinite(c.leads) ? c.leads : 0}"></td>
+    <td>${Number.isFinite(c.cpl) ? `${c.cpl.toFixed(2)} €` : ''}</td>
+    <td class="campaign-actions-cell editing-actions">
+      <button type="button" class="campaign-inline-btn" data-action="campaign-save" data-id="${escapeHtml(c.id)}">Guardar</button>
+      <button type="button" class="campaign-inline-btn secondary" data-action="campaign-cancel" data-id="${escapeHtml(c.id)}">Cancelar</button>
+    </td>
+  `;
+}
+
+function cerrarMenusCampanias(exceptId) {
+  document.querySelectorAll('.campaign-settings-menu').forEach(menu => {
+    if (exceptId && menu.dataset.menuFor === String(exceptId)) return;
+    menu.hidden = true;
+  });
+}
+
+function obtenerPayloadCampaniaDesdeFila(row, id) {
+  const campaña = obtenerCampaniaPorId(id);
+  const getInput = (field) => row.querySelector(`[data-edit="${field}"]`);
+  const base = {
+    id: String(id || ''),
+    nombre: String(getInput('nombre')?.value || '').trim(),
+    fechaInicio: String(getInput('fechaInicio')?.value || '').trim(),
+    fechaFin: String(getInput('fechaFin')?.value || '').trim(),
+    clics: Number(getInput('clics')?.value || ''),
+    impresiones: Number(getInput('impresiones')?.value || ''),
+    coste: Number(getInput('coste')?.value || ''),
+    leads: Number(getInput('leads')?.value || ''),
+    promocionId: String(campaña?.promocionId || ''),
+    promocionNombre: String(campaña?.promocionNombre || ''),
+    timestamp: new Date().toISOString()
+  };
+  return { ...base, ...calcularMetricasCampania(base) };
+}
+
+async function actualizarCampania(campaign) {
+  const body = new URLSearchParams();
+  body.set('action', 'updateCampaign');
+  body.set('campaign', JSON.stringify(campaign));
+  const response = await fetch(urlApi, { method: 'POST', body });
+  return response.json();
+}
+
+async function eliminarCampania(id) {
+  const body = new URLSearchParams();
+  body.set('action', 'deleteCampaign');
+  body.set('id', String(id || ''));
+  const response = await fetch(urlApi, { method: 'POST', body });
+  return response.json();
+}
+
+function configurarEventosComparacionCampanias() {
+  const tabla = document.getElementById('tabla-comparacion');
+  if (!tabla) return;
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.campaign-actions-cell')) {
+      cerrarMenusCampanias();
+    }
+  });
+
+  tabla.addEventListener('click', async (event) => {
+    const rowCampania = event.target.closest('tr[data-campaign-id]');
+    if (rowCampania && !event.target.closest('.campaign-actions-cell') && !event.target.closest('input') && !event.target.closest('button')) {
+      cargarCampaniaEnResumen(rowCampania.dataset.campaignId);
+      return;
+    }
+
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    const id = target.dataset.id;
+    if (!id) return;
+
+    if (action === 'campaign-open-menu') {
+      const menu = tabla.querySelector(`.campaign-settings-menu[data-menu-for="${CSS.escape(String(id))}"]`);
+      if (!menu) return;
+      const willOpen = menu.hidden;
+      cerrarMenusCampanias(id);
+      menu.hidden = !willOpen;
+      return;
+    }
+
+    if (action === 'campaign-edit') {
+      cerrarMenusCampanias();
+      renderCampaniaEnModoEdicion(id);
+      return;
+    }
+
+    if (action === 'campaign-cancel') {
+      renderCampaniasEnComparacion();
+      return;
+    }
+
+    if (action === 'campaign-save') {
+      const row = target.closest('tr');
+      if (!row) return;
+      const payload = obtenerPayloadCampaniaDesdeFila(row, id);
+      const msg = document.getElementById('guardar-campania-msg');
+      if (!validarBaseCampania(payload)) {
+        if (msg) msg.textContent = 'Revisa los datos de edición: nombre, fechas válidas y valores numéricos ≥ 0.';
+        return;
+      }
+      target.disabled = true;
+      try {
+        const result = await actualizarCampania(payload);
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'No se pudo actualizar la campaña');
+        }
+        campañasGuardadas = campañasGuardadas.map(c => String(c.id) === String(id) ? normalizarCampaniaRow(payload) : c);
+        if (msg) msg.textContent = 'Campaña actualizada correctamente.';
+        renderCampaniasEnComparacion();
+      } catch (error) {
+        console.error('Error al actualizar campaña:', error);
+        if (msg) msg.textContent = 'Error al actualizar campaña.';
+      } finally {
+        target.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'campaign-delete') {
+      cerrarMenusCampanias();
+      if (!window.confirm('¿Seguro que quieres eliminar esta campaña? Esta acción no se puede deshacer.')) return;
+      const msg = document.getElementById('guardar-campania-msg');
+      target.disabled = true;
+      try {
+        const result = await eliminarCampania(id);
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'No se pudo eliminar la campaña');
+        }
+        campañasGuardadas = campañasGuardadas.filter(c => String(c.id) !== String(id));
+        if (msg) msg.textContent = 'Campaña eliminada correctamente.';
+        renderCampaniasEnComparacion();
+      } catch (error) {
+        console.error('Error al eliminar campaña:', error);
+        if (msg) msg.textContent = 'Error al eliminar campaña.';
+      } finally {
+        target.disabled = false;
+      }
+    }
+  });
 }
 
 async function cargarCampaniasGuardadas() {
@@ -958,6 +1429,9 @@ async function guardarCampaña() {
   const impresiones = Number(document.getElementById('input-impresiones')?.value || '');
   const coste = Number(document.getElementById('input-coste')?.value || '');
   const leads = Number(document.getElementById('input-formularios')?.value || '');
+  const selectPromocion = document.getElementById('embudo-categoria');
+  let promocionId = String(selectPromocion?.value || 'all').trim();
+  let promocionNombre = String(selectPromocion?.selectedOptions?.[0]?.textContent || 'Todo').trim();
   const msg = document.getElementById('guardar-campania-msg');
 
   const metricToNumber = (id) => {
@@ -974,6 +1448,24 @@ async function guardarCampaña() {
   if (invalidBase || invalidNums || isNaN(dInicio) || isNaN(dFin) || dInicio >= dFin) {
     if (msg) msg.textContent = 'Completa correctamente el RESUMEN DE CAMPAÑA y el nombre de campaña antes de guardar.';
     return;
+  }
+
+  // Si no hay promoción explícita, intentamos inferirla por el rango de fechas.
+  if (!promocionId || promocionId === 'all' || promocionId.startsWith('legacy_')) {
+    const inferidaId = inferirPromocionCampania({ fechaInicio, fechaFin });
+    if (inferidaId) {
+      const optionInferida = Array.from(selectPromocion?.options || []).find(o => String(o.value) === String(inferidaId));
+      if (optionInferida) {
+        promocionId = String(optionInferida.value);
+        promocionNombre = String(optionInferida.textContent || '').trim();
+        if (selectPromocion) selectPromocion.value = promocionId;
+      }
+    }
+  }
+
+  // Guardar IDs temporales no aporta valor histórico, mejor persistir solo el nombre si aplica.
+  if (promocionId.startsWith('legacy_')) {
+    promocionId = '';
   }
 
   const unDia = 1000 * 60 * 60 * 24;
@@ -993,6 +1485,8 @@ async function guardarCampaña() {
     campaign: {
       id: `camp_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       nombre,
+      promocionId,
+      promocionNombre,
       fechaInicio,
       fechaFin,
       clics,
@@ -1084,31 +1578,8 @@ function calcularEmbudo() {
   setMetricValue('res-dia-coste', costeDia, '€');
   setMetricValue('res-dia-leads', leadsDia);
 
-  const kpiMessage = {
-    ctr: ctrCalc === null ? '' : (ctrCalc < 1 ? '🔴 El anuncio no está captando atención diaria' : (ctrCalc < 2 ? '🟠 Atención mejorable, optimizar creatividades' : (ctrCalc <= 4 ? '🟢 CTR correcto y estable' : '🔥 Anuncio muy atractivo diariamente'))),
-    conv: conv === null ? '' : (conv < 1 ? '🔴 La landing no convierte de forma consistente' : (conv < 2 ? '🟠 Conversión baja diaria, revisar formulario o mensaje' : (conv <= 5 ? '🟢 Conversión correcta y estable' : '🔥 Landing muy optimizada en el tiempo'))),
-    cpc: cpc === null ? '' : (cpc < 0.10 ? '🔥 Tráfico extremadamente barato sostenido' : (cpc < 0.30 ? '🟢 Clic eficiente de forma estable' : (cpc <= 0.80 ? '🟠 CPC medio, optimización posible' : '🔴 Clic caro sostenido en el tiempo'))),
-    cpl: cpl === null ? '' : (cpl < 15 ? '🔥 Captación muy eficiente y estable' : (cpl < 35 ? '🟢 Coste controlado diario' : (cpl < 60 ? '🟠 Lead caro de forma sostenida' : '🔴 Campaña no rentable en el tiempo'))),
-    calidad: clicsPorFormulario === null ? '' : (clicsPorFormulario < 20 ? '🔥 Tráfico muy cualificado de forma constante' : (clicsPorFormulario <= 40 ? '🟢 Buen tráfico diario' : (clicsPorFormulario <= 100 ? '🟠 Calidad media estable' : '🔴 Tráfico poco cualificado sostenido')))
-  };
-
-  let combinado = '';
-  if (ctrCalc !== null && conv !== null) {
-    if (ctrCalc < 2 && conv < 2) combinado = '🔴 Problema estructural diario en embudo';
-    else if (ctrCalc >= 2 && conv < 2) combinado = '🔴 Anuncio funciona, landing falla';
-    else if (ctrCalc < 2 && conv >= 2) combinado = '🔴 Buen producto pero anuncio débil';
-    else if (ctrCalc > 4 && conv > 5) combinado = '🔥 Campaña altamente optimizada diaria';
-    else combinado = '🟢 Embudo equilibrado en el tiempo';
-  }
-
   renderCampaniasEnComparacion();
-
-  document.getElementById('diag-ctr').textContent = kpiMessage.ctr;
-  document.getElementById('diag-conv').textContent = kpiMessage.conv;
-  document.getElementById('diag-cpc').textContent = kpiMessage.cpc;
-  document.getElementById('diag-cpl').textContent = kpiMessage.cpl;
-  document.getElementById('diag-calidad').textContent = kpiMessage.calidad;
-  document.getElementById('diag-combinado').textContent = combinado;
+  actualizarDiagnosticoEmbudo({ ctrCalc, conv, cpc, cpl, clicsPorFormulario });
 }
 
 
@@ -1461,6 +1932,7 @@ function configurarNotasExport() {
 document.addEventListener('DOMContentLoaded', () => {
   configurarFiltros();
   configurarEmbudo();
+  configurarEventosComparacionCampanias();
   configurarNotasExport();
   cargarDatos();
 });

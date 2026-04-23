@@ -234,7 +234,7 @@ if (fechaNotif) {
       }
 
       Logger.log(`Enviando email inmediato a andrealoran@proyectopia.es - Asunto: ${asunto}`);
-      MailApp.sendEmail('andrealoran@proyectopia.es', asunto, cuerpo);
+      sendEmailFormateado_('andrealoran@proyectopia.es', asunto, cuerpo);
       return createResponse({ status: 'success', message: 'Email enviado' });
     }
     
@@ -494,8 +494,18 @@ function handleCategoriasAction_(action, payload, method) {
     }
 
     if (actionName === 'saveCampaign') {
-      const campaign = payload.campaign || payload;
+      const campaign = parseCampaignPayload_(payload.campaign || payload);
       return saveCampaign_(campaign);
+    }
+
+    if (actionName === 'updateCampaign') {
+      const campaign = parseCampaignPayload_(payload.campaign || payload);
+      return updateCampaign_(campaign);
+    }
+
+    if (actionName === 'deleteCampaign') {
+      const id = String(payload.id || '').trim();
+      return deleteCampaign_(id);
     }
 
     if (actionName === 'getCampaigns') {
@@ -959,7 +969,7 @@ function procesarEmailsProgramados() {
     try {
       const datos = JSON.parse(props[key]);
       if (datos.enviarEn <= ahora) {
-        MailApp.sendEmail('andrealoran@proyectopia.es', datos.asunto, datos.cuerpo);
+        sendEmailFormateado_('andrealoran@proyectopia.es', datos.asunto, datos.cuerpo);
         PropertiesService.getScriptProperties().deleteProperty(key);
         enviados++;
         Logger.log('Email enviado para clave: ' + key);
@@ -982,7 +992,7 @@ function procesarEmailsProgramados() {
 }
 
 function testEnvioInmediato() {
-  MailApp.sendEmail('andrealoran@proyectopia.es', 'TEST', 'Email de prueba inmediato');
+  sendEmailFormateado_('andrealoran@proyectopia.es', 'TEST', 'Email de prueba inmediato');
   Logger.log('Email de prueba enviado');
 }
 
@@ -995,6 +1005,48 @@ function testProgramado() {
   }));
   crearTriggerPeriodicoSiNoExiste_();
   Logger.log('Recordatorio de prueba guardado y trigger creado');
+}
+
+function sendEmailFormateado_(to, asunto, contenido) {
+  const email = prepararContenidoEmail_(contenido);
+  MailApp.sendEmail({
+    to: String(to || '').trim(),
+    subject: String(asunto || '').trim(),
+    body: email.textBody,
+    htmlBody: email.htmlBody
+  });
+}
+
+function prepararContenidoEmail_(contenido) {
+  const raw = String(contenido || '').replace(/\r\n?/g, '\n');
+
+  // 1) Markdown básico -> HTML
+  let html = raw
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  // 2) Saltos de línea
+  html = html.replace(/\n/g, '<br>');
+
+  // 3) Saneado mínimo para evitar scripts/handlers inseguros
+  html = html
+    .replace(/<\s*script[^>]*>[\s\S]*?<\s*\/\s*script>/gi, '')
+    .replace(/<\s*style[^>]*>[\s\S]*?<\s*\/\s*style>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/href\s*=\s*"\s*javascript:[^"]*"/gi, 'href="#"')
+    .replace(/href\s*=\s*'\s*javascript:[^']*'/gi, "href='#'");
+
+  const htmlBody = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#111;">${html}</div>`;
+  const textBody = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return { htmlBody, textBody };
 }
 
 
@@ -1062,7 +1114,7 @@ function getCampaignSheet_() {
 
 function ensureCampaignHeaders_(sheet) {
   const expected = [
-    'id', 'nombre', 'fechaInicio', 'fechaFin', 'clics', 'impresiones', 'coste', 'leads',
+    'id', 'nombre', 'promocionId', 'promocionNombre', 'fechaInicio', 'fechaFin', 'clics', 'impresiones', 'coste', 'leads',
     'ctr', 'cpc', 'cpl', 'conversion', 'diasCampania',
     'clicsDia', 'impresionesDia', 'costeDia', 'leadsDia', 'timestamp'
   ];
@@ -1095,6 +1147,48 @@ function saveCampaign_(campaign) {
     sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
   }
   return createResponse({ status: 'success', id: id, campaign: campaign });
+}
+
+function parseCampaignPayload_(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      return {};
+    }
+  }
+  return raw;
+}
+
+function updateCampaign_(campaign) {
+  const sheet = getCampaignSheet_();
+  const headers = ensureCampaignHeaders_(sheet);
+  const id = String((campaign && campaign.id) || '').trim();
+  if (!id) return createResponse({ status: 'error', message: 'ID de campaña obligatorio' });
+  if (sheet.getLastRow() < 2) return createResponse({ status: 'error', message: 'No hay campañas guardadas' });
+
+  const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(r => String(r[0]));
+  const idx = ids.findIndex(v => v === id);
+  if (idx === -1) return createResponse({ status: 'error', message: 'Campaña no encontrada' });
+
+  const rowNum = idx + 2;
+  const row = headers.map(h => (campaign[h] !== undefined ? campaign[h] : ''));
+  row[0] = id;
+  sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
+  return createResponse({ status: 'success', id: id, campaign: campaign });
+}
+
+function deleteCampaign_(id) {
+  const campaignId = String(id || '').trim();
+  if (!campaignId) return createResponse({ status: 'error', message: 'ID de campaña obligatorio' });
+  const sheet = getCampaignSheet_();
+  if (sheet.getLastRow() < 2) return createResponse({ status: 'error', message: 'No hay campañas guardadas' });
+  const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(r => String(r[0]));
+  const idx = ids.findIndex(v => v === campaignId);
+  if (idx === -1) return createResponse({ status: 'error', message: 'Campaña no encontrada' });
+  sheet.deleteRow(idx + 2);
+  return createResponse({ status: 'success', id: campaignId });
 }
 
 function getCampaigns_() {
