@@ -1429,8 +1429,9 @@ async function guardarCampaña() {
   const impresiones = Number(document.getElementById('input-impresiones')?.value || '');
   const coste = Number(document.getElementById('input-coste')?.value || '');
   const leads = Number(document.getElementById('input-formularios')?.value || '');
-  const promocionId = String(document.getElementById('embudo-categoria')?.value || 'all').trim();
-  const promocionNombre = String(document.getElementById('embudo-categoria')?.selectedOptions?.[0]?.textContent || 'Todo').trim();
+  const selectPromocion = document.getElementById('embudo-categoria');
+  let promocionId = String(selectPromocion?.value || 'all').trim();
+  let promocionNombre = String(selectPromocion?.selectedOptions?.[0]?.textContent || 'Todo').trim();
   const msg = document.getElementById('guardar-campania-msg');
 
   const metricToNumber = (id) => {
@@ -1447,6 +1448,24 @@ async function guardarCampaña() {
   if (invalidBase || invalidNums || isNaN(dInicio) || isNaN(dFin) || dInicio >= dFin) {
     if (msg) msg.textContent = 'Completa correctamente el RESUMEN DE CAMPAÑA y el nombre de campaña antes de guardar.';
     return;
+  }
+
+  // Si no hay promoción explícita, intentamos inferirla por el rango de fechas.
+  if (!promocionId || promocionId === 'all' || promocionId.startsWith('legacy_')) {
+    const inferidaId = inferirPromocionCampania({ fechaInicio, fechaFin });
+    if (inferidaId) {
+      const optionInferida = Array.from(selectPromocion?.options || []).find(o => String(o.value) === String(inferidaId));
+      if (optionInferida) {
+        promocionId = String(optionInferida.value);
+        promocionNombre = String(optionInferida.textContent || '').trim();
+        if (selectPromocion) selectPromocion.value = promocionId;
+      }
+    }
+  }
+
+  // Guardar IDs temporales no aporta valor histórico, mejor persistir solo el nombre si aplica.
+  if (promocionId.startsWith('legacy_')) {
+    promocionId = '';
   }
 
   const unDia = 1000 * 60 * 60 * 24;
