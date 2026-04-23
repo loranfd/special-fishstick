@@ -430,6 +430,12 @@ body {
   min-width: 92px;
 }
 
+/* Ajuste visual solicitado: eliminar línea inferior morada en bloque de anuncio */
+#detalle-anuncio .metric-body {
+  border-bottom: 0;
+  box-shadow: none;
+}
+
 .embudo-value.unavailable {
   color: #9CA3AF;
 }

@@ -786,6 +786,8 @@ function configurarEmbudo() {
     btnResetResumen.addEventListener('click', resetearResumenCampania);
   }
 
+  configurarSincroniaAnuncioTrafico();
+
   const embudoInputs = [
     'embudo-categoria',
     'input-fecha-inicio',
@@ -803,6 +805,24 @@ function configurarEmbudo() {
   });
 
   calcularEmbudo();
+}
+
+function configurarSincroniaAnuncioTrafico() {
+  const detalleAnuncio = document.getElementById('detalle-anuncio');
+  const detalleTrafico = document.getElementById('detalle-trafico');
+  if (!detalleAnuncio || !detalleTrafico) return;
+
+  let syncing = false;
+  const sync = (source, target) => {
+    if (syncing) return;
+    syncing = true;
+    if (source.hasAttribute('open')) target.setAttribute('open', 'open');
+    else target.removeAttribute('open');
+    syncing = false;
+  };
+
+  detalleAnuncio.addEventListener('toggle', () => sync(detalleAnuncio, detalleTrafico));
+  detalleTrafico.addEventListener('toggle', () => sync(detalleTrafico, detalleAnuncio));
 }
 
 function safeCalculate(fn, dependencies) {
@@ -983,9 +1003,19 @@ function cargarCampaniaEnResumen(campaignId) {
   if (!campaña) return;
 
   const selectCat = document.getElementById('embudo-categoria');
-  if (selectCat && campaña.promocionId) {
-    const existe = Array.from(selectCat.options).some(o => o.value === campaña.promocionId);
-    if (existe) selectCat.value = campaña.promocionId;
+  if (selectCat) {
+    const options = Array.from(selectCat.options);
+    if (campaña.promocionId) {
+      const byId = options.find(o => o.value === campaña.promocionId);
+      if (byId) {
+        selectCat.value = byId.value;
+      }
+    }
+    if (campaña.promocionNombre && selectCat.value === 'all') {
+      const nombreTarget = normalizar(campaña.promocionNombre);
+      const byName = options.find(o => normalizar(o.textContent) === nombreTarget);
+      if (byName) selectCat.value = byName.value;
+    }
   }
 
   const setVal = (id, value) => {
