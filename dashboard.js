@@ -1060,6 +1060,18 @@ function cargarCampaniaEnResumen(campaignId) {
       }
     }
 
+    // Fallback por inferencia desde datos reales (campañas antiguas sin metadata de promoción)
+    if (!matched) {
+      const inferredId = inferirPromocionCampania(campaña);
+      if (inferredId) {
+        const byInfer = options.find(o => String(o.value) === String(inferredId));
+        if (byInfer) {
+          selectCat.value = byInfer.value;
+          matched = true;
+        }
+      }
+    }
+
     // Si existe metadata de promoción pero no está en las opciones, añadirla para mostrarla correctamente
     if (!matched) {
       const fallbackLabel = String(campaña.promocionNombre || campaña.promocionId || '').trim();
@@ -1114,6 +1126,40 @@ function cargarCampaniaEnResumen(campaignId) {
 
   abrirBloquesAnalisisCampania();
   document.getElementById('detalle-resumen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function inferirPromocionCampania(campaña) {
+  const data = datosGlobales?.dataCompleta;
+  const categorias = appConfig?.categorias || [];
+  if (!Array.isArray(data) || !campaña?.fechaInicio || !campaña?.fechaFin || categorias.length === 0) return '';
+
+  const inicio = new Date(`${campaña.fechaInicio}T00:00:00`);
+  const fin = new Date(`${campaña.fechaFin}T23:59:59`);
+  if (isNaN(inicio) || isNaN(fin) || fin < inicio) return '';
+
+  const counter = new Map();
+  categorias.forEach(cat => counter.set(String(cat.id), 0));
+
+  data.forEach((item) => {
+    const rawFecha = String(item['Fecha'] || '').trim();
+    if (!rawFecha) return;
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(rawFecha) ? new Date(`${rawFecha}T00:00:00`) : new Date(rawFecha);
+    if (isNaN(fecha) || fecha < inicio || fecha > fin) return;
+    const categoria = CategoriaSystem.resolveCategoria(appConfig, item);
+    const id = String(categoria?.id || '');
+    if (!id || !counter.has(id)) return;
+    counter.set(id, (counter.get(id) || 0) + 1);
+  });
+
+  let bestId = '';
+  let bestCount = 0;
+  counter.forEach((count, id) => {
+    if (count > bestCount) {
+      bestCount = count;
+      bestId = id;
+    }
+  });
+  return bestId;
 }
 
 function abrirBloquesAnalisisCampania() {
