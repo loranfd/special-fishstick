@@ -1005,9 +1005,14 @@ function cargarCampaniaEnResumen(campaignId) {
 
   const selectCat = document.getElementById('embudo-categoria');
   if (selectCat) {
+    Array.from(selectCat.options).forEach((opt) => {
+      if (opt.dataset.dynamic === '1') opt.remove();
+    });
     const options = Array.from(selectCat.options);
     const normalizeLabel = (v) => normalizar(String(v || '').replace(/[^a-z0-9áéíóúüñ\s-]/gi, ' ').replace(/\s+/g, ' '));
 
+    // Siempre reiniciar a "Todo" antes de intentar asignar la categoría de la campaña
+    selectCat.value = 'all';
     let matched = false;
     if (campaña.promocionId) {
       const byId = options.find(o => String(o.value) === String(campaña.promocionId));
@@ -1038,6 +1043,34 @@ function cargarCampaniaEnResumen(campaignId) {
       });
       if (byLoose) {
         selectCat.value = byLoose.value;
+        matched = true;
+      }
+    }
+
+    // Fallback extra: intentar deducir por nombre de campaña
+    if (!matched && campaña.nombre) {
+      const campaignName = normalizeLabel(campaña.nombre);
+      const byCampaignName = options.find(o => {
+        const txt = normalizeLabel(o.textContent);
+        return txt && txt !== 'todo' && (campaignName.includes(txt) || txt.includes(campaignName));
+      });
+      if (byCampaignName) {
+        selectCat.value = byCampaignName.value;
+        matched = true;
+      }
+    }
+
+    // Si existe metadata de promoción pero no está en las opciones, añadirla para mostrarla correctamente
+    if (!matched) {
+      const fallbackLabel = String(campaña.promocionNombre || campaña.promocionId || '').trim();
+      if (fallbackLabel) {
+        const tempValue = `legacy_${Date.now()}`;
+        const opt = document.createElement('option');
+        opt.value = tempValue;
+        opt.textContent = fallbackLabel;
+        opt.dataset.dynamic = '1';
+        selectCat.appendChild(opt);
+        selectCat.value = tempValue;
       }
     }
   }
